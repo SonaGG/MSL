@@ -8,16 +8,19 @@ import gg.sona.msl.ir.IrConstant
 import gg.sona.msl.ir.IrVector
 import gg.sona.msl.ir.Opcode
 import gg.sona.msl.ir.StorageClass
+import gg.sona.msl.ir.Value
 import gg.sona.msl.passes.Uses
 import gg.sona.msl.source.Diagnostics
 import gg.sona.msl.source.SourceLocation
 
 object InterfaceHints {
     private const val LANES = "xyzw"
+    private const val UNIFORM_THRESHOLD = 4
 
     fun report(entry: EntryPoint, diagnostics: Diagnostics) {
         val uses = Uses(entry.function)
         val prefix = "${entry.stage.keyword} function '${entry.name}'"
+        uniformWork(entry, prefix, diagnostics)
         for (global in entry.interfaceVariables) {
             val info = global.interfaceInfo
             val name = info?.name?.ifEmpty { null } ?: global.name
@@ -32,11 +35,34 @@ object InterfaceHints {
         }
     }
 
+    private fun uniformWork(entry: EntryPoint, prefix: String, diagnostics: Diagnostics) {
+        val uniform = HashSet<Value>()
+        fun isUniform(value: Value): Boolean = value is IrConstant || value in uniform ||
+            value is GlobalVariable && (value.storage == StorageClass.Uniform || value.storage == StorageClass.PushConstant)
+        var operations = 0
+        for (instruction in entry.function.instructions()) {
+            val derived = when (instruction.opcode) {
+                Opcode.Load -> Purity.rootStorage(instruction.operands[0]).let { it == StorageClass.Uniform || it == StorageClass.PushConstant } &&
+                    isUniform(instruction.operands[0])
+
+                Opcode.AccessChain -> instruction.operands.all(::isUniform)
+                Opcode.Phi -> false
+                else -> Purity.isFoldable(instruction) && instruction.operands.all(::isUniform)
+            }
+            if (!derived) continue
+            uniform.add(instruction)
+            if (instruction.opcode != Opcode.Load && instruction.opcode != Opcode.AccessChain && Purity.cost(instruction) > 0) operations++
+        }
+        if (operations >= UNIFORM_THRESHOLD) {
+            hint(diagnostics, "$prefix: $operations operations depend only on constant buffer data; computing them once on the CPU would remove them from every invocation")
+        }
+    }
+
     private fun hint(diagnostics: Diagnostics, message: String) = diagnostics.performanceHint(SourceLocation.NONE, message)
 
     private fun referenced(global: GlobalVariable, uses: Uses): Boolean = uses.isUsed(global)
 
-    private fun loads(pointer: gg.sona.msl.ir.Value, uses: Uses): List<Instruction> = uses.of(pointer).flatMap { user ->
+    private fun loads(pointer: Value, uses: Uses): List<Instruction> = uses.of(pointer).flatMap { user ->
         when (user.opcode) {
             Opcode.Load -> listOf(user)
             Opcode.AccessChain -> if (user.operands[0] === pointer) loads(user, uses) else emptyList()
