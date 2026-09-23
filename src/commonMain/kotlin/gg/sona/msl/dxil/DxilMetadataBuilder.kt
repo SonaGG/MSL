@@ -85,7 +85,9 @@ class DxilMetadataBuilder(private val emitter: DxilEmitter) {
     }
 
     private fun resource(resource: DxilResource): MdNode {
-        val symbol = MdValue(LlvmUndef(LlvmPointerType(symbolType(resource))))
+        val element = symbolType(resource)
+        val symbolType = if (resource.count == 1) element else LlvmArrayType(element, maxOf(resource.count, 0))
+        val symbol = MdValue(LlvmUndef(LlvmPointerType(symbolType)))
         val common = listOf(
             i32(resource.id),
             symbol,
