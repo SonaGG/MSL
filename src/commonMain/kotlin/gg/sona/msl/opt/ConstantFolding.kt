@@ -18,6 +18,7 @@ import gg.sona.msl.ir.Opcode
 import gg.sona.msl.ir.Value
 import gg.sona.msl.util.HalfFloat
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -284,13 +285,13 @@ object ConstantFolding {
             Intrinsic.Acos -> unary { kotlin.math.acos(it) }
             Intrinsic.Atan -> unary { kotlin.math.atan(it) }
             Intrinsic.Exp -> unary { kotlin.math.exp(it) }
-            Intrinsic.Exp2 -> unary { Math.pow(2.0, it) }
+            Intrinsic.Exp2 -> unary { 2.0.pow(it) }
             Intrinsic.Log -> unary { kotlin.math.ln(it) }
             Intrinsic.Log2 -> unary { kotlin.math.log2(it) }
             Intrinsic.Sinpi -> unary { kotlin.math.sin(it * PI) }
             Intrinsic.Cospi -> unary { kotlin.math.cos(it * PI) }
             Intrinsic.Saturate -> unary { it.coerceIn(0.0, 1.0) }
-            Intrinsic.Pow, Intrinsic.Powr -> binary { x, y -> Math.pow(x, y) }
+            Intrinsic.Pow, Intrinsic.Powr -> binary { x, y -> x.pow(y) }
             Intrinsic.Atan2 -> binary { y, x -> kotlin.math.atan2(y, x) }
             Intrinsic.FMin -> binary { a, b -> minOf(a, b) }
             Intrinsic.FMax -> binary { a, b -> maxOf(a, b) }
