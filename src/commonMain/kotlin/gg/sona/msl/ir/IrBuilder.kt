@@ -76,6 +76,8 @@ class IrBuilder(val function: IrFunction) {
 
     fun ptrOffset(base: Value, offset: Value): Instruction = emit(Opcode.PtrOffset, base.type, listOf(base, offset))
 
+    fun ptrDiff(left: Value, right: Value): Instruction = emit(Opcode.PtrDiff, IrInt.I32, listOf(left, right))
+
     fun construct(type: IrType, parts: List<Value>): Value {
         if (parts.all { it is IrConstant } && parts.isNotEmpty()) {
             val flattened = flattenConstants(type, parts)

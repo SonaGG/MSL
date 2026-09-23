@@ -442,8 +442,11 @@ class ExpressionAnalyzer(private val sema: Sema) {
             rightType is PointerType && leftType is ScalarType && leftType.kind.isInteger && operator == HBinaryOperator.Add ->
                 HPointerOffset(right, left, location)
 
-            leftType is PointerType && rightType is PointerType && (operator == HBinaryOperator.Equal || operator == HBinaryOperator.NotEqual) ->
-                error(location, "pointer comparisons are not supported")
+            leftType is PointerType && rightType is PointerType && operator.isComparison ->
+                HBinary(operator, left, right, ScalarType.Bool, location)
+
+            leftType is PointerType && rightType is PointerType && operator == HBinaryOperator.Subtract ->
+                HBinary(operator, left, right, ScalarType.Long, location)
 
             else -> invalidOperands(operator, leftType, rightType, location)
         }

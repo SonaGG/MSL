@@ -87,6 +87,7 @@ value class Opcode(val id: Int) {
         val Store = op("store")
         val AccessChain = op("access")
         val PtrOffset = op("ptroffset")
+        val PtrDiff = op("ptrdiff")
         val ArrayLength = op("arraylength")
         val Call = op("call")
         val Intrinsic = op("intrinsic")

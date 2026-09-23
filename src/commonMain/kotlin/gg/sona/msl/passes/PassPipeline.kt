@@ -10,6 +10,7 @@ object PassPipeline {
             PointerTypeFixup.run(function)
             Mem2Reg.run(function)
             PhiSimplification.run(function)
+            PointerLegalization.run(function)
             DeadCodeElimination.run(function)
             UnreachableBlockElimination.pruneIncoming(function)
         }

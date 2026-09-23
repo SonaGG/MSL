@@ -609,6 +609,19 @@ class FunctionLowering(
         val leftType = left.type
         val rightType = right.type
         if (leftType is IrMatrix || rightType is IrMatrix) return matrixBinary(operator, left, right, result)
+        if (leftType is IrPointer && rightType is IrPointer) {
+            val difference = builder.ptrDiff(left, right)
+            val zero = ConstantScalar.i32(0)
+            return when (operator) {
+                HBinaryOperator.Equal -> builder.binary(Opcode.IEqual, result, difference, zero)
+                HBinaryOperator.NotEqual -> builder.binary(Opcode.INotEqual, result, difference, zero)
+                HBinaryOperator.Less -> builder.binary(Opcode.SLess, result, difference, zero)
+                HBinaryOperator.LessEqual -> builder.binary(Opcode.SLessEqual, result, difference, zero)
+                HBinaryOperator.Greater -> builder.binary(Opcode.SGreater, result, difference, zero)
+                HBinaryOperator.GreaterEqual -> builder.binary(Opcode.SGreaterEqual, result, difference, zero)
+                else -> builder.unary(Opcode.SConvert, result, difference)
+            }
+        }
         val element = leftType.scalar
         if (element is IrBool) {
             val opcode = when (operator) {
