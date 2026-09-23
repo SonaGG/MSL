@@ -92,7 +92,7 @@ class DxilMetadataBuilder(private val emitter: DxilEmitter) {
         val common = listOf(
             i32(resource.id),
             symbol,
-            MdString(resource.variable.name),
+            MdString(if (emitter.options.emitNames) resource.variable.name else ""),
             i32(resource.space),
             i32(resource.register),
             i32(if (resource.count <= 0) -1 else resource.count),
@@ -109,7 +109,7 @@ class DxilMetadataBuilder(private val emitter: DxilEmitter) {
 
     private fun symbolType(resource: DxilResource): LlvmStructType {
         val name = when (resource.resourceClass) {
-            DxilResourceClass.CBuffer -> "cbuffer.${resource.variable.name.filter { it.isLetterOrDigit() || it == '_' }}"
+            DxilResourceClass.CBuffer -> if (emitter.options.emitNames) "cbuffer.${resource.variable.name.filter { it.isLetterOrDigit() || it == '_' }}" else "cbuffer.${resource.id}"
             DxilResourceClass.Sampler -> if (resource.comparison) "struct.SamplerComparisonState" else "struct.SamplerState"
             DxilResourceClass.Srv, DxilResourceClass.Uav -> {
                 val prefix = if (resource.resourceClass == DxilResourceClass.Uav) "RW" else ""

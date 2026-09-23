@@ -5,5 +5,5 @@ class SpirvOptions(
     val flipVertexY: Boolean = false,
     val bindings: SpirvBindingLayout = SpirvBindingLayout.SeparateSets,
     val pushConstantBuffers: Set<Int> = emptySet(),
-    val emitNames: Boolean = true,
+    val emitNames: Boolean = false,
 )

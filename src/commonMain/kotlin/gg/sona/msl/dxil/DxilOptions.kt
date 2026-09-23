@@ -2,6 +2,7 @@ package gg.sona.msl.dxil
 
 class DxilOptions(
     val minimumShaderModel: Int = 0,
+    val emitNames: Boolean = false,
     val validatorVersion: Int = 8,
     val bindings: DxilBindingLayout = DxilBindingLayout.Default,
     val semantics: DxilSemantics = DxilSemantics.Default,

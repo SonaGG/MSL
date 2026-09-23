@@ -637,7 +637,7 @@ class DxilEmitter(
             }
             val values = initialValues[leaf]
             val global = LlvmGlobalVariable(
-                (if (addressSpace == 3) "tgsm" else "const") + ".${llvm.globals.size}.$name",
+                (if (addressSpace == 3) "g" else "c") + llvm.globals.size + if (options.emitNames && name.isNotEmpty()) ".$name" else "",
                 leaf.arrayType,
                 addressSpace,
                 values != null,
