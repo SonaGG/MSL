@@ -13,4 +13,7 @@ data class ReflectedResource(
     val arraySize: Int,
     val sizeInBytes: Int,
     val samplerState: SamplerState?,
+    val argumentBuffer: Int = -1,
+    val space: Int = 0,
+    val register: Int = 0,
 )

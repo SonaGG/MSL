@@ -86,7 +86,9 @@ class MslCompiler(
                         ShaderStage.Fragment -> "ps"
                         ShaderStage.Kernel -> "cs"
                     }
-                    shaders.add(DxilShader(bytes, "${profile}_6_${emitter.shaderModelMinor}", Reflector.reflect(module, entry)))
+                    shaders.add(
+                        DxilShader(bytes, "${profile}_6_${emitter.shaderModelMinor}", Reflector.reflect(module, entry), emitter.dispatchSizeLocation),
+                    )
                 }
             }
         } catch (exception: CompilationException) {

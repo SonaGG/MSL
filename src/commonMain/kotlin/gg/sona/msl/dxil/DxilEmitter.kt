@@ -60,6 +60,7 @@ import gg.sona.msl.llvm.LlvmUndef
 import gg.sona.msl.llvm.LlvmValue
 import gg.sona.msl.llvm.LlvmVoidType
 import gg.sona.msl.passes.ControlFlowGraph
+import gg.sona.msl.reflect.RegisterLocation
 import gg.sona.msl.reflect.ResourceBindingRequest
 import gg.sona.msl.source.Diagnostics
 import gg.sona.msl.source.SourceLocation
@@ -92,6 +93,9 @@ class DxilEmitter(
     private lateinit var entryBlock: LlvmBlock
     private val intrinsics = DxilIntrinsicEmitter(this)
     private var dispatchResource: DxilResource? = null
+
+    val dispatchSizeLocation: RegisterLocation?
+        get() = dispatchResource?.let { RegisterLocation(it.space, it.register) }
     var hasErrors = false
         private set
 
@@ -415,7 +419,7 @@ class DxilEmitter(
         for (variable in globals.distinct()) {
             val info = variable.resource!!
             val index = if (info.isConstexprSampler) DxilBindingLayout.CONSTEXPR_SAMPLER_BASE + constexpr.indexOf(variable) else info.mslIndex
-            val location = options.bindings.locate(ResourceBindingRequest(variable.name, info.kind, index, info.isConstexprSampler))
+            val location = options.bindings.locate(ResourceBindingRequest(variable.name, info.kind, index, info.isConstexprSampler, info.argumentBuffer))
             info.space = location.space
             info.register = location.register
             val (resourceClass, kind, element) = classify(variable)

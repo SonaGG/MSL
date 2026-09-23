@@ -24,6 +24,9 @@ object Reflector {
                 resource.arraySize,
                 size(global.valueType),
                 resource.samplerState,
+                resource.argumentBuffer,
+                resource.space,
+                resource.register,
             )
         }
         return ShaderReflection(
