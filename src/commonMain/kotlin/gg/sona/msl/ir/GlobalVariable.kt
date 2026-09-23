@@ -10,6 +10,7 @@ class GlobalVariable(
     var resource: ResourceInfo? = null
     var interfaceInfo: InterfaceInfo? = null
     var lengthSpecialization: SpecConstant? = null
+    var isConstant: Boolean = false
 
     override fun toString(): String = "@$name"
 }

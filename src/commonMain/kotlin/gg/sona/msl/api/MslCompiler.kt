@@ -4,7 +4,11 @@ import gg.sona.msl.dxil.DxilContainerWriter
 import gg.sona.msl.dxil.DxilEmitter
 import gg.sona.msl.dxil.DxilNativeIntrinsics
 import gg.sona.msl.dxil.DxilOptions
+import gg.sona.msl.ir.Instruction
+import gg.sona.msl.ir.Intrinsic
 import gg.sona.msl.ir.IrModule
+import gg.sona.msl.opt.OptimizationLevel
+import gg.sona.msl.opt.Optimizer
 import gg.sona.msl.lower.Lowering
 import gg.sona.msl.lower.LoweringOptions
 import gg.sona.msl.parse.Parser
@@ -34,6 +38,7 @@ class MslCompiler(
         fileName: String = "shader.metal",
         options: SpirvOptions = SpirvOptions(),
         lowering: LoweringOptions = LoweringOptions(),
+        optimization: OptimizationLevel = OptimizationLevel.Aggressive,
     ): SpirvCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -41,12 +46,14 @@ class MslCompiler(
         try {
             val module = frontend(source, fileName, sources, diagnostics, lowering, "__MSL_TARGET_SPIRV__")
             if (module != null) {
-                val expansion = IntrinsicExpansion { intrinsic, _ -> SpirvIntrinsicEmitter.isNative(intrinsic) }
+                val isNative: (Intrinsic, Instruction) -> Boolean = { intrinsic, _ -> SpirvIntrinsicEmitter.isNative(intrinsic) }
+                val expansion = IntrinsicExpansion(isNative)
                 for (function in module.functions) {
                     expansion.run(function)
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
+                Optimizer(optimization, isNative, diagnostics).run(module)
                 for (entry in module.entryPoints) {
                     val words = SpirvEmitter(module, entry, options, diagnostics).emit()
                     shaders.add(SpirvShader(words, Reflector.reflect(module, entry)))
@@ -63,6 +70,7 @@ class MslCompiler(
         fileName: String = "shader.metal",
         options: DxilOptions = DxilOptions(),
         lowering: LoweringOptions = LoweringOptions(),
+        optimization: OptimizationLevel = OptimizationLevel.Aggressive,
     ): DxilCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -76,6 +84,7 @@ class MslCompiler(
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
+                Optimizer(optimization, DxilNativeIntrinsics::isNative, diagnostics).run(module)
                 for (entry in module.entryPoints) {
                     val emitter = DxilEmitter(module, entry, options, diagnostics)
                     val result = emitter.emit()
