@@ -1,7 +1,7 @@
 package gg.sona.msl.ir
 
 class GlobalVariable(
-    val name: String,
+    var name: String,
     val valueType: IrType,
     val storage: StorageClass,
 ) : Value() {
