@@ -91,7 +91,7 @@ fragment Color languageFragment(float4 position [[position]], constant Settings&
     float value = luminance(point) + luminance(half3(point)) + stack.top() + c.re + c.im;
     value += lerpValue(1.0f, 3.0f) + lerpValue(1.0f, 3.0f, 0.25);
     value += float(factorial(4)) + SQUARE(value) * float(HAS_METAL_2);
-    uint bits = as_type<uint>(value);
+    uint bits = as_type<uint>(floor(value));
     float2 halves = float2(as_type<half2>(bits));
     int3 swizzled = int3(1, 2, 3).zyx;
     float4 color = settings.palette[uint(settings.mode) % 3];

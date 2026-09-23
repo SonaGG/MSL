@@ -2,7 +2,15 @@ package gg.sona.msl.opt
 
 import gg.sona.msl.dxil.DxilNativeIntrinsics
 import gg.sona.msl.frontend.Frontend
+import gg.sona.msl.ir.Instruction
+import gg.sona.msl.ir.IrArray
+import gg.sona.msl.ir.Intrinsic
+import gg.sona.msl.ir.IrMatrix
 import gg.sona.msl.ir.IrModule
+import gg.sona.msl.ir.IrScalar
+import gg.sona.msl.ir.IrStruct
+import gg.sona.msl.ir.IrType
+import gg.sona.msl.ir.IrVector
 import gg.sona.msl.ir.Opcode
 import gg.sona.msl.ir.WorkgroupSize
 import gg.sona.msl.lower.LoweringOptions
@@ -29,13 +37,44 @@ class OptimizationReportTest {
         return module
     }
 
+    private fun work(instruction: Instruction): Int {
+        val lanes = instruction.type.let { if (it is IrMatrix) it.columns * it.rows else it.componentCount.coerceAtLeast(1) }
+        return when (instruction.opcode) {
+            Opcode.Phi, Opcode.CompositeConstruct, Opcode.CompositeExtract, Opcode.CompositeInsert, Opcode.VectorShuffle,
+            Opcode.AccessChain, Opcode.Variable, Opcode.Load, Opcode.Store, Opcode.Bitcast,
+            -> 0
+
+            Opcode.MatrixTimesVector, Opcode.VectorTimesMatrix -> {
+                val matrix = instruction.operands.first { it.type is IrMatrix }.type as IrMatrix
+                matrix.columns * matrix.rows
+            }
+
+            Opcode.MatrixTimesMatrix -> lanes * (instruction.operands[0].type as IrMatrix).columns
+            Opcode.Intrinsic -> when (instruction.intrinsic) {
+                Intrinsic.Dot, Intrinsic.Length, Intrinsic.Distance -> instruction.operands[0].type.componentCount
+                Intrinsic.Normalize -> 2 * lanes + 1
+                else -> lanes
+            }
+
+            else -> if (instruction.isTerminator) 0 else lanes
+        }
+    }
+
+    private fun scalars(type: IrType): Int = when (type) {
+        is IrScalar, is IrVector -> type.componentCount
+        is IrMatrix -> type.columns * type.rows
+        is IrArray -> type.length.coerceAtLeast(1) * scalars(type.element)
+        is IrStruct -> type.members.sumOf { scalars(it.type) }
+        else -> 1
+    }
+
     private fun stats(module: IrModule): IntArray {
         val instructions = module.functions.flatMap { it.instructions().toList() }
         return intArrayOf(
-            instructions.count { it.opcode != Opcode.Phi && !it.isTerminator },
+            instructions.sumOf { work(it) },
             module.functions.sumOf { it.blocks.size },
             instructions.count { it.opcode == Opcode.CondBranch || it.opcode == Opcode.Switch },
-            instructions.count { it.opcode == Opcode.Load },
+            instructions.filter { it.opcode == Opcode.Load }.sumOf { scalars(it.type) },
         )
     }
 
@@ -43,7 +82,7 @@ class OptimizationReportTest {
     fun report() {
         val files = File("src/jvmTest/resources/shaders").listFiles { file -> file.extension == "metal" }!!.sortedBy { it.name }
         val totals = IntArray(8)
-        println("shader                     instr  blocks branches loads   (before -> after)")
+        println("shader                   alu lanes  blocks branches fetched  (before -> after)")
         for (file in files) {
             val before = stats(prepare(file.readText()))
             val module = prepare(file.readText())
