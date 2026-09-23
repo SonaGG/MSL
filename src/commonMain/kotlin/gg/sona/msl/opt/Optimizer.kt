@@ -21,6 +21,7 @@ class Optimizer(
         if (level == OptimizationLevel.None) return
         markConstantGlobals(module)
         val simplifier = Simplifier(isNative)
+        val ifConversion = IfConversion(if (level == OptimizationLevel.Aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION)
         for (function in module.functions) {
             var rounds = 0
             while (rounds++ < MAX_ROUNDS) {
@@ -29,6 +30,9 @@ class Optimizer(
                 changed = cleanup(function) or changed
                 changed = simplifier.run(function) or changed
                 changed = ValueNumbering.run(function) or changed
+                changed = LoopInvariantCodeMotion.run(function) or changed
+                changed = ifConversion.run(function) or changed
+                changed = BlockMerging.run(function) or changed
                 changed = cleanup(function) or changed
                 if (!changed) break
             }
@@ -72,5 +76,7 @@ class Optimizer(
 
     private companion object {
         const val MAX_ROUNDS = 16
+        const val AGGRESSIVE_SPECULATION = 24
+        const val DEFAULT_SPECULATION = 8
     }
 }

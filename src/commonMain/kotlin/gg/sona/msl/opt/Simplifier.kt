@@ -17,6 +17,7 @@ import gg.sona.msl.ir.IrScalar
 import gg.sona.msl.ir.IrType
 import gg.sona.msl.ir.IrVector
 import gg.sona.msl.ir.Opcode
+import gg.sona.msl.ir.Undef
 import gg.sona.msl.ir.Value
 
 class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
@@ -325,6 +326,8 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
         val (condition, whenTrue, whenFalse) = instruction.operands
         return when {
             whenTrue === whenFalse -> whenTrue
+            whenFalse is Undef -> whenTrue
+            whenTrue is Undef -> whenFalse
             whenTrue == whenFalse && whenTrue is IrConstant -> whenTrue
             instruction.type is IrBool && isValue(whenTrue, 1.0) && isValue(whenFalse, 0.0) && condition.type is IrBool -> condition
             instruction.type is IrBool && isValue(whenTrue, 0.0) && isValue(whenFalse, 1.0) && condition.type is IrBool ->
