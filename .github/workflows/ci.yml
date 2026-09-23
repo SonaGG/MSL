@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install SPIR-V tools
+        run: sudo apt-get update && sudo apt-get install -y spirv-tools
+      - name: Test
+        run: ./gradlew jvmTest compileKotlinLinuxX64 compileKotlinLinuxArm64 compileKotlinMingwX64 compileKotlinMacosArm64
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-linux
+          path: build/test-results
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install DirectX Shader Compiler
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo microsoft/DirectXShaderCompiler --pattern "dxc_*.zip" --dir dxc
+          Expand-Archive -Path (Get-ChildItem dxc/*.zip | Select-Object -First 1).FullName -DestinationPath dxc/extracted
+          Add-Content $env:GITHUB_PATH (Resolve-Path dxc/extracted/bin/x64).Path
+      - name: Test
+        run: ./gradlew jvmTest
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-windows
+          path: build/test-results
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-linux, test-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Publish
+        env:
+          CLOVER_MAVEN_USERNAME: ${{ secrets.CLOVER_MAVEN_USERNAME }}
+          CLOVER_MAVEN_PASSWORD: ${{ secrets.CLOVER_MAVEN_PASSWORD }}
+        run: ./gradlew publishAllPublicationsToCloverRepository -PmslVersion=${GITHUB_REF_NAME#v}
