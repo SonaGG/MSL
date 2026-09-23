@@ -50,9 +50,12 @@ class OptimizationReportTest {
             }
 
             Opcode.MatrixTimesMatrix -> lanes * (instruction.operands[0].type as IrMatrix).columns
+            Opcode.SDiv, Opcode.UDiv, Opcode.SRem, Opcode.URem -> lanes * INTEGER_DIVISION
+            Opcode.FDiv, Opcode.FRem -> lanes * DIVISION
             Opcode.Intrinsic -> when (instruction.intrinsic) {
                 Intrinsic.Dot, Intrinsic.Length, Intrinsic.Distance -> instruction.operands[0].type.componentCount
-                Intrinsic.Normalize -> 2 * lanes + 1
+                Intrinsic.Normalize -> 2 * lanes + TRANSCENDENTAL
+                in TRANSCENDENTALS -> lanes * TRANSCENDENTAL
                 else -> lanes
             }
 
@@ -82,7 +85,7 @@ class OptimizationReportTest {
     fun report() {
         val files = File("src/jvmTest/resources/shaders").listFiles { file -> file.extension == "metal" }!!.sortedBy { it.name }
         val totals = IntArray(8)
-        println("shader                   alu lanes  blocks branches fetched  (before -> after)")
+        println("shader                   alu cost   blocks branches fetched  (before -> after)")
         for (file in files) {
             val before = stats(prepare(file.readText()))
             val module = prepare(file.readText())
@@ -95,5 +98,15 @@ class OptimizationReportTest {
             println("%-24s %5d->%-5d %3d->%-3d %3d->%-3d %3d->%-3d".format(file.name, before[0], after[0], before[1], after[1], before[2], after[2], before[3], after[3]))
         }
         println("%-24s %5d->%-5d %3d->%-3d %3d->%-3d %3d->%-3d".format("total", totals[0], totals[4], totals[1], totals[5], totals[2], totals[6], totals[3], totals[7]))
+    }
+
+    private companion object {
+        const val INTEGER_DIVISION = 20
+        const val DIVISION = 2
+        const val TRANSCENDENTAL = 4
+        val TRANSCENDENTALS = setOf(
+            Intrinsic.Sqrt, Intrinsic.Rsqrt, Intrinsic.Sin, Intrinsic.Cos, Intrinsic.Tan, Intrinsic.Exp, Intrinsic.Exp2,
+            Intrinsic.Log, Intrinsic.Log2, Intrinsic.Pow, Intrinsic.Powr, Intrinsic.Asin, Intrinsic.Acos, Intrinsic.Atan, Intrinsic.Atan2,
+        )
     }
 }
