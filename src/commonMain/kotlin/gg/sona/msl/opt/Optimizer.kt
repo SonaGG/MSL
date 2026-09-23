@@ -30,6 +30,7 @@ class Optimizer(
         val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION)
         val scalarization = Scalarization(isNative)
         val fmaFormation = FmaFormation(isNative)
+        val strengthReduction = StrengthReduction(isNative)
         for (function in module.functions) {
             var rounds = 0
             while (rounds++ < MAX_ROUNDS) {
@@ -38,10 +39,15 @@ class Optimizer(
                 if (aggressive) {
                     changed = scalarization.run(function) or changed
                     changed = LoadNarrowing.run(function) or changed
+                    changed = MemoryForwarding.run(function) or changed
                 }
                 changed = ConditionalConstantPropagation.run(function) or changed
                 changed = cleanup(function) or changed
                 changed = simplifier.run(function) or changed
+                if (aggressive) {
+                    changed = Reassociation.run(function) or changed
+                    changed = strengthReduction.run(function) or changed
+                }
                 changed = ValueNumbering.run(function) or changed
                 changed = LoopInvariantCodeMotion.run(function) or changed
                 changed = unrolling.run(function) or changed
@@ -51,6 +57,8 @@ class Optimizer(
                 if (!changed) break
             }
             if (aggressive) {
+                var sinks = 0
+                while (sinks < MAX_ROUNDS && CodeSinking.run(function)) sinks++
                 if (fmaFormation.run(function)) cleanup(function)
                 Scheduling.run(function)
             }
