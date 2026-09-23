@@ -334,8 +334,21 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
                 at(instruction).unary(Opcode.LogicalNot, IrBool, condition)
 
             isOp(condition, Opcode.LogicalNot) -> at(instruction).select((condition as Instruction).operands[0], whenFalse, whenTrue)
-            else -> null
+            else -> minMax(instruction, condition, whenTrue, whenFalse)
         }
+    }
+
+    private fun minMax(instruction: Instruction, condition: Value, whenTrue: Value, whenFalse: Value): Value? {
+        val compare = condition as? Instruction ?: return null
+        val kind = MIN_MAX[compare.opcode] ?: return null
+        val (a, b) = compare.operands
+        val intrinsic = when {
+            whenTrue === a && whenFalse === b -> kind.first
+            whenTrue === b && whenFalse === a -> kind.second
+            else -> return null
+        }
+        if (instruction.type != a.type || !native(intrinsic, instruction)) return null
+        return at(instruction).intrinsic(intrinsic, instruction.type, listOf(a, b))
     }
 
     private fun extract(instruction: Instruction, composite: Value, path: IntArray): Value? {
@@ -512,6 +525,21 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
     }
 
     private companion object {
+        val MIN_MAX = mapOf(
+            Opcode.FLess to (Intrinsic.FMin to Intrinsic.FMax),
+            Opcode.FLessEqual to (Intrinsic.FMin to Intrinsic.FMax),
+            Opcode.FGreater to (Intrinsic.FMax to Intrinsic.FMin),
+            Opcode.FGreaterEqual to (Intrinsic.FMax to Intrinsic.FMin),
+            Opcode.SLess to (Intrinsic.SMin to Intrinsic.SMax),
+            Opcode.SLessEqual to (Intrinsic.SMin to Intrinsic.SMax),
+            Opcode.SGreater to (Intrinsic.SMax to Intrinsic.SMin),
+            Opcode.SGreaterEqual to (Intrinsic.SMax to Intrinsic.SMin),
+            Opcode.ULess to (Intrinsic.UMin to Intrinsic.UMax),
+            Opcode.ULessEqual to (Intrinsic.UMin to Intrinsic.UMax),
+            Opcode.UGreater to (Intrinsic.UMax to Intrinsic.UMin),
+            Opcode.UGreaterEqual to (Intrinsic.UMax to Intrinsic.UMin),
+        )
+
         val INVERSE = mapOf(
             Opcode.IEqual to Opcode.INotEqual, Opcode.INotEqual to Opcode.IEqual,
             Opcode.SLess to Opcode.SGreaterEqual, Opcode.SGreaterEqual to Opcode.SLess,
