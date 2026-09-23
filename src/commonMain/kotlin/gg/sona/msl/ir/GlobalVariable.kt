@@ -1,0 +1,15 @@
+package gg.sona.msl.ir
+
+class GlobalVariable(
+    val name: String,
+    val valueType: IrType,
+    val storage: StorageClass,
+) : Value() {
+    override val type: IrType = IrPointer(valueType, storage)
+    var initializer: IrConstant? = null
+    var resource: ResourceInfo? = null
+    var interfaceInfo: InterfaceInfo? = null
+    var lengthSpecialization: SpecConstant? = null
+
+    override fun toString(): String = "@$name"
+}

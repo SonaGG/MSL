@@ -1,0 +1,8 @@
+package gg.sona.msl.ast
+
+import gg.sona.msl.source.SourceLocation
+
+class ReturnStmt(
+    val value: Expr?,
+    override val location: SourceLocation,
+) : Stmt()
