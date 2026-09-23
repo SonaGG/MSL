@@ -602,10 +602,13 @@ class EntryPointLowering(private val lowering: Lowering, private val source: Fun
         index: Int = 0,
     ): GlobalVariable {
         val variable = GlobalVariable("out.$name", type, StorageClass.Output)
+        val varying = builtin == null && stage == ShaderStage.Vertex
         variable.interfaceInfo = InterfaceInfo(
             false,
             location,
             builtin,
+            interpolation = if (varying) interpolation(fieldAttributes, type) else Interpolation.Perspective,
+            sampling = if (varying) sampling(fieldAttributes) else Sampling.Center,
             index = index,
             name = name,
             invariant = attributes.has(fieldAttributes, "invariant"),
