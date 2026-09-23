@@ -514,6 +514,8 @@ class DxilEmitter(
         }
     }
 
+    val constantRows = HashMap<List<Any>, LlvmValue>()
+
     fun handle(resource: DxilResource, index: LlvmValue?): LlvmValue {
         if (index == null) {
             resource.handle?.let { return it }

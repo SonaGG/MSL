@@ -179,14 +179,11 @@ class DxilBufferAccess(private val emitter: DxilEmitter) {
                 emitter.i32(laneBytes.countTrailingZeroBits()),
             )
         }
-        val result = emitter.callOp(
-            "cbufferLoadLegacy",
-            DxilOpcode.CBufferLoadLegacy,
-            type,
-            emitter.types.cbufRet(type),
-            listOf(handle(resource), row),
-            DxilEmitter.READ_ONLY,
-        )
+        val handle = handle(resource)
+        val load = {
+            emitter.callOp("cbufferLoadLegacy", DxilOpcode.CBufferLoadLegacy, type, emitter.types.cbufRet(type), listOf(handle, row), DxilEmitter.READ_ONLY)
+        }
+        val result = if (row is LlvmConstantInt) emitter.constantRows.getOrPut(listOf(builder.block, handle, row.value, type), load) else load()
         if (lane is LlvmConstantInt) return builder.extractValue(result, lane.value.toInt())
         val lanes = List(lanesPerRow) { builder.extractValue(result, it) }
         var selected = lanes[0]
