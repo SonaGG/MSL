@@ -75,4 +75,5 @@ object BitcodeConstants {
     const val METADATA_NAME = 4
     const val METADATA_DISTINCT_NODE = 5
     const val METADATA_NAMED_NODE = 10
+    const val METADATA_KIND = 6
 }

@@ -20,6 +20,7 @@ class DxilMetadataBuilder(private val emitter: DxilEmitter) {
     fun build(function: LlvmFunction): Map<String, List<MdNode>> {
         val minor = emitter.shaderModelMinor
         val result = LinkedHashMap<String, List<MdNode>>()
+        result["llvm.ident"] = listOf(MdNode(listOf(MdString("msl"))))
         result["dx.version"] = listOf(node(i32(1), i32(minor)))
         result["dx.valver"] = listOf(node(i32(1), i32(emitter.options.validatorVersion)))
         result["dx.shaderModel"] = listOf(node(MdString(stageName()), i32(6), i32(minor)))

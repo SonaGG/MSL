@@ -13,6 +13,7 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
     private val metadataIds = LinkedHashMap<Any, Int>()
     private val metadataList = ArrayList<LlvmMetadata>()
     private var moduleValueCount = 0
+    private val functionConstants = HashMap<LlvmFunction, List<LlvmConstant>>()
 
     fun write(): ByteArray {
         collect()
@@ -31,6 +32,7 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
         writeGlobals()
         writeConstants()
         writeMetadata()
+        writeMetadataKinds()
         writeSymbolTable()
         for (function in module.functions) if (!function.isDeclaration) writeFunction(function)
         stream.exitBlock()
@@ -100,37 +102,55 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
             addType(global.type)
             global.initializer?.let { addConstant(it) }
         }
+        for ((_, nodes) in module.namedMetadata) nodes.forEach { addMetadata(it) }
+        if (metadataList.isNotEmpty()) addType(LlvmMetadataType)
+        val used = LinkedHashMap<LlvmFunction, LinkedHashSet<LlvmConstant>>()
         for (function in module.functions) {
             addType(function.functionType)
             addType(function.type)
             if (function.attributes.isNotEmpty()) attributeLists.getOrPut(function.attributes) { attributeLists.size + 1 }
+            val local = LinkedHashSet<LlvmConstant>()
+            fun use(constant: LlvmConstant) {
+                addType(constant.type)
+                if (constant is LlvmAggregate) constant.elements.forEach { use(it) }
+                local.add(constant)
+            }
             for (block in function.blocks) {
                 for (instruction in block.instructions) {
                     addType(instruction.type)
                     instruction.auxiliaryType?.let { addType(it) }
-                    instruction.operands.forEach { addOperand(it) }
-                    instruction.caseValues.forEach { addConstant(it) }
+                    for (operand in instruction.operands) {
+                        addType(operand.type)
+                        if (operand is LlvmConstant) use(operand)
+                    }
+                    instruction.caseValues.forEach { use(it) }
                     instruction.callee?.let { addType(it.functionType) }
                 }
             }
+            used[function] = local
         }
-        for ((_, nodes) in module.namedMetadata) nodes.forEach { addMetadata(it) }
         var next = 0
         for (global in module.globals) valueIds[global] = next++
         for (function in module.functions) valueIds[function] = next++
-        constants.sortWith(compareBy { typeIds.getValue(it.type) })
-        val ordered = ArrayList<LlvmConstant>()
-        val placed = HashSet<LlvmConstant>()
-        fun place(constant: LlvmConstant) {
-            if (!placed.add(constant)) return
-            if (constant is LlvmAggregate) constant.elements.forEach { place(it) }
-            ordered.add(constant)
-        }
-        constants.forEach { place(it) }
+        val ordered = order(constants)
         constants.clear()
         constants.addAll(ordered)
         for (constant in constants) valueIds[constant] = next++
         moduleValueCount = next
+        for ((function, local) in used) functionConstants[function] = order(local.filter { it !in valueIds })
+    }
+
+    private fun order(source: Collection<LlvmConstant>): List<LlvmConstant> {
+        val sorted = source.sortedBy { typeIds.getValue(it.type) }
+        val ordered = ArrayList<LlvmConstant>()
+        val placed = HashSet<LlvmConstant>()
+        fun place(constant: LlvmConstant) {
+            if (!placed.add(constant)) return
+            if (constant is LlvmAggregate) constant.elements.forEach { if (it in source) place(it) }
+            ordered.add(constant)
+        }
+        sorted.forEach { place(it) }
+        return ordered
     }
 
     private fun writeAttributes() {
@@ -229,6 +249,10 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
     private fun signExtend(value: Long, bits: Int): Long = if (bits >= 64) value else (value shl (64 - bits)) shr (64 - bits)
 
     private fun writeConstants() {
+        writeConstants(constants) { valueIds.getValue(it) }
+    }
+
+    private fun writeConstants(constants: List<LlvmConstant>, id: (LlvmValue) -> Int) {
         if (constants.isEmpty()) return
         stream.enterBlock(BitcodeConstants.CONSTANTS_BLOCK, 4)
         var currentType: LlvmType? = null
@@ -242,7 +266,7 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
                 is LlvmConstantFloat -> stream.record(BitcodeConstants.CST_FLOAT, constant.bits)
                 is LlvmUndef -> stream.record(BitcodeConstants.CST_UNDEF)
                 is LlvmNull -> stream.record(BitcodeConstants.CST_NULL)
-                is LlvmAggregate -> stream.record(BitcodeConstants.CST_AGGREGATE, constant.elements.map { valueIds.getValue(it).toLong() })
+                is LlvmAggregate -> stream.record(BitcodeConstants.CST_AGGREGATE, constant.elements.map { id(it).toLong() })
             }
         }
         stream.exitBlock()
@@ -273,6 +297,14 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
         stream.exitBlock()
     }
 
+    private fun writeMetadataKinds() {
+        stream.enterBlock(BitcodeConstants.METADATA_BLOCK, 3)
+        METADATA_KINDS.forEachIndexed { index, name ->
+            stream.record(BitcodeConstants.METADATA_KIND, longArrayOf(index.toLong()) + chars(name))
+        }
+        stream.exitBlock()
+    }
+
     private fun writeSymbolTable() {
         stream.enterBlock(BitcodeConstants.VALUE_SYMTAB_BLOCK, 4)
         for (global in module.globals) {
@@ -288,6 +320,8 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
         val local = HashMap<LlvmValue, Int>()
         var next = moduleValueCount
         for (argument in function.arguments) local[argument] = next++
+        val constants = functionConstants[function].orEmpty()
+        for (constant in constants) local[constant] = next++
         for (block in function.blocks) {
             for (instruction in block.instructions) if (instruction.producesValue) local[instruction] = next++
         }
@@ -296,7 +330,8 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
         fun id(value: LlvmValue): Int = local[value] ?: valueIds[value] ?: error("unnumbered value $value")
         stream.enterBlock(BitcodeConstants.FUNCTION_BLOCK, 4)
         stream.record(BitcodeConstants.FUNC_DECLAREBLOCKS, function.blocks.size.toLong())
-        var instructionId = moduleValueCount + function.arguments.size
+        writeConstants(constants) { id(it) }
+        var instructionId = moduleValueCount + function.arguments.size + constants.size
         for (block in function.blocks) {
             for (instruction in block.instructions) {
                 val operands = ArrayList<Long>()
@@ -329,7 +364,7 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
                         value(instruction.operands[0])
                         operands.add(blockIds.getValue(instruction.targets[0]).toLong())
                         instruction.caseValues.forEachIndexed { index, case ->
-                            operands.add(valueIds.getValue(case).toLong())
+                            operands.add(id(case).toLong())
                             operands.add(blockIds.getValue(instruction.targets[index + 1]).toLong())
                         }
                         BitcodeConstants.FUNC_SWITCH
@@ -457,5 +492,12 @@ class LlvmBitcodeWriter(private val module: LlvmModule) {
             }
         }
         stream.exitBlock()
+    }
+
+    private companion object {
+        val METADATA_KINDS = listOf(
+            "dbg", "tbaa", "prof", "fpmath", "range", "tbaa.struct", "invariant.load", "alias.scope", "noalias",
+            "nontemporal", "llvm.mem.parallel_loop_access", "nonnull", "dereferenceable", "dereferenceable_or_null",
+        )
     }
 }
