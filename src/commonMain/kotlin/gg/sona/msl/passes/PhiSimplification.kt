@@ -8,12 +8,13 @@ import gg.sona.msl.ir.Value
 object PhiSimplification {
     fun run(function: IrFunction) {
         while (true) {
+            val cfg = ControlFlowGraph(function)
             val replacements = HashMap<Value, Value>()
             for (block in function.blocks) {
                 for (phi in block.phis) {
                     val distinct = phi.operands.filter { it !== phi && it !is Undef }.distinct()
                     val replacement = when {
-                        distinct.size == 1 -> distinct[0]
+                        distinct.size == 1 && dominates(cfg, distinct[0], block) -> distinct[0]
                         distinct.isEmpty() && phi.operands.isNotEmpty() -> Undef(phi.type)
                         else -> null
                     }
@@ -32,5 +33,12 @@ object PhiSimplification {
                 }
             }
         }
+    }
+
+    private fun dominates(cfg: ControlFlowGraph, value: Value, block: gg.sona.msl.ir.Block): Boolean {
+        val instruction = value as? gg.sona.msl.ir.Instruction ?: return true
+        val definition = instruction.block ?: return true
+        if (definition === block) return instruction.opcode == Opcode.Phi
+        return cfg.dominates(definition, block)
     }
 }
