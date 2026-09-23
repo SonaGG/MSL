@@ -48,7 +48,41 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
         return builder
     }
 
-    private fun simplify(instruction: Instruction): Value? {
+    private fun simplify(instruction: Instruction): Value? = distributeSelect(instruction) ?: simplifyOperation(instruction)
+
+    private fun constantSelect(value: Value): Instruction? {
+        val select = value as? Instruction ?: return null
+        if (select.opcode != Opcode.Select) return null
+        val (_, whenTrue, whenFalse) = select.operands
+        return select.takeIf { whenTrue is IrConstant && whenFalse is IrConstant && ConstantFolding.isFoldable(whenTrue) && ConstantFolding.isFoldable(whenFalse) }
+    }
+
+    private fun distributeSelect(instruction: Instruction): Value? {
+        if (instruction.opcode !in DISTRIBUTABLE || instruction.operands.size !in 1..2) return null
+        val ops = instruction.operands
+        val index = ops.indexOfFirst { constantSelect(it) != null }
+        if (index < 0) return null
+        val select = constantSelect(ops[index])!!
+        val condition = select.operands[0]
+        if (condition.type.componentCount != instruction.type.componentCount && condition.type.componentCount != 1) return null
+        val other = if (ops.size == 2) ops[1 - index] else null
+        if (other == null || other is IrConstant && ConstantFolding.isFoldable(other)) {
+            fun apply(arm: Value): IrConstant? = ConstantFolding.fold(instruction, ops.mapIndexed { i, op -> if (i == index) arm else op })
+            val whenTrue = apply(select.operands[1]) ?: return null
+            val whenFalse = apply(select.operands[2]) ?: return null
+            return at(instruction).select(condition, whenTrue, whenFalse)
+        }
+        if (instruction.opcode != Opcode.FMul && instruction.opcode != Opcode.IMul) return null
+        if (other.type != instruction.type) return null
+        val (whenTrue, whenFalse) = select.operands.drop(1)
+        return when {
+            isValue(whenTrue, 1.0) && isValue(whenFalse, 0.0) -> at(instruction).select(condition, other, zero(instruction.type))
+            isValue(whenTrue, 0.0) && isValue(whenFalse, 1.0) -> at(instruction).select(condition, zero(instruction.type), other)
+            else -> null
+        }
+    }
+
+    private fun simplifyOperation(instruction: Instruction): Value? {
         val ops = instruction.operands
         val type = instruction.type
         return when (instruction.opcode) {
@@ -85,6 +119,8 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
 
             Opcode.And -> when {
                 type.scalar is IrBool -> logicalAnd(ops[0], ops[1])
+                absorbs(ops[0], ops[1], Opcode.Or) -> ops[1]
+                absorbs(ops[1], ops[0], Opcode.Or) -> ops[0]
                 isValue(ops[1], 0.0) || isValue(ops[0], 0.0) -> zero(type)
                 isAllOnes(ops[1]) -> ops[0]
                 isAllOnes(ops[0]) -> ops[1]
@@ -94,6 +130,8 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
 
             Opcode.Or -> when {
                 type.scalar is IrBool -> logicalOr(ops[0], ops[1])
+                absorbs(ops[0], ops[1], Opcode.And) -> ops[1]
+                absorbs(ops[1], ops[0], Opcode.And) -> ops[0]
                 isValue(ops[1], 0.0) -> ops[0]
                 isValue(ops[0], 0.0) -> ops[1]
                 ops[0] === ops[1] -> ops[0]
@@ -363,6 +401,9 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
         return at(instruction).intrinsic(intrinsic, instruction.type, listOf(a, b))
     }
 
+    private fun absorbs(composite: Value, operand: Value, opcode: Opcode): Boolean =
+        composite is Instruction && composite.opcode == opcode && composite.operands.any { it === operand }
+
     private fun same(a: Value, b: Value): Boolean = a === b || a is IrConstant && a == b
 
     private fun extract(instruction: Instruction, composite: Value, path: IntArray): Value? {
@@ -539,6 +580,15 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
     }
 
     private companion object {
+        val DISTRIBUTABLE = setOf(
+            Opcode.IAdd, Opcode.ISub, Opcode.IMul, Opcode.FAdd, Opcode.FSub, Opcode.FMul, Opcode.FDiv, Opcode.FNeg, Opcode.INeg,
+            Opcode.And, Opcode.Or, Opcode.Xor, Opcode.Not, Opcode.Shl, Opcode.LShr, Opcode.AShr,
+            Opcode.IEqual, Opcode.INotEqual, Opcode.SLess, Opcode.SLessEqual, Opcode.SGreater, Opcode.SGreaterEqual,
+            Opcode.ULess, Opcode.ULessEqual, Opcode.UGreater, Opcode.UGreaterEqual,
+            Opcode.FEqual, Opcode.FNotEqual, Opcode.FLess, Opcode.FLessEqual, Opcode.FGreater, Opcode.FGreaterEqual,
+            Opcode.SToF, Opcode.UToF, Opcode.FToS, Opcode.FToU, Opcode.FConvert, Opcode.SConvert, Opcode.UConvert,
+        )
+
         val MIN_MAX = mapOf(
             Opcode.FLess to (Intrinsic.FMin to Intrinsic.FMax),
             Opcode.FLessEqual to (Intrinsic.FMin to Intrinsic.FMax),
