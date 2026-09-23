@@ -19,19 +19,26 @@ class Optimizer(
     private val diagnostics: Diagnostics? = null,
 ) {
     private lateinit var scalarReplacement: ScalarReplacement
+    private val aggressive = level == OptimizationLevel.Aggressive
 
     fun run(module: IrModule) {
         if (level == OptimizationLevel.None) return
         markConstantGlobals(module)
         val simplifier = Simplifier(isNative)
-        scalarReplacement = ScalarReplacement(if (level == OptimizationLevel.Aggressive) 32 else 8)
-        val unrolling = if (level == OptimizationLevel.Aggressive) LoopUnrolling(64, 1024) else LoopUnrolling(8, 128)
-        val ifConversion = IfConversion(if (level == OptimizationLevel.Aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION)
+        scalarReplacement = ScalarReplacement(if (aggressive) 32 else 8)
+        val unrolling = if (aggressive) LoopUnrolling(64, 1024) else LoopUnrolling(8, 128)
+        val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION)
+        val scalarization = Scalarization(isNative)
+        val fmaFormation = FmaFormation(isNative)
         for (function in module.functions) {
             var rounds = 0
             while (rounds++ < MAX_ROUNDS) {
                 var changed = false
                 changed = promote(function) or changed
+                if (aggressive) {
+                    changed = scalarization.run(function) or changed
+                    changed = LoadNarrowing.run(function) or changed
+                }
                 changed = ConditionalConstantPropagation.run(function) or changed
                 changed = cleanup(function) or changed
                 changed = simplifier.run(function) or changed
@@ -43,13 +50,17 @@ class Optimizer(
                 changed = cleanup(function) or changed
                 if (!changed) break
             }
+            if (aggressive) {
+                if (fmaFormation.run(function)) cleanup(function)
+                Scheduling.run(function)
+            }
         }
         diagnostics?.let { report -> module.entryPoints.forEach { InterfaceHints.report(it, report) } }
         finish(module)
     }
 
     private fun finish(module: IrModule) {
-        if (level == OptimizationLevel.Aggressive) NameMangling.run(module)
+        if (aggressive) NameMangling.run(module)
     }
 
     private fun promote(function: IrFunction): Boolean {
