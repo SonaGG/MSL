@@ -230,6 +230,7 @@ object Spv {
     const val CapabilityGroupNonUniformQuad = 68
     const val CapabilityShaderLayer = 69
     const val CapabilityShaderViewportIndex = 70
+    const val CapabilityShaderViewportIndexLayerEXT = 5254
     const val CapabilityMinLod = 42
     const val CapabilityDrawParameters = 4427
     const val CapabilityStorageBuffer16BitAccess = 4433

@@ -5,6 +5,7 @@ import gg.sona.msl.ir.BuiltinVariable
 import gg.sona.msl.ir.ConstantComposite
 import gg.sona.msl.ir.ConstantNull
 import gg.sona.msl.ir.ConstantScalar
+import gg.sona.msl.ir.Constants
 import gg.sona.msl.ir.ConstructKind
 import gg.sona.msl.ir.DepthMode
 import gg.sona.msl.ir.EntryPoint
@@ -214,6 +215,10 @@ class SpirvEmitter(
         instruction(Spv.OpExtInst, resultType, glslImport(), instruction, *operands)
 
     fun type(type: IrType, layout: SpirvLayout = SpirvLayout.Logical): Int {
+        if (layout == SpirvLayout.Explicit) {
+            if (type is IrBool) return type(IrInt.U8)
+            if (type is IrVector && type.element is IrBool) return type(IrVector.of(IrInt.U8, type.count))
+        }
         val key: Any = when (type) {
             is IrArray, is IrStruct -> type to layout
             is IrImage -> listOf(
@@ -297,7 +302,7 @@ class SpirvEmitter(
 
     private fun checkExplicitMember(type: IrType) {
         when (type) {
-            is IrBool -> error("boolean values cannot be stored in buffer memory")
+            is IrBool -> storageCapability(IrInt.U8)
             is IrVector -> checkExplicitMember(type.element)
             is IrArray -> checkExplicitMember(type.element)
             is IrScalar -> storageCapability(type)
@@ -311,6 +316,7 @@ class SpirvEmitter(
             capability(Spv.CapabilityUniformAndStorageBuffer16BitAccess)
         }
         if (type.bits == 8) {
+            if (!version.atLeast(SpirvVersion.V1_5)) extension("SPV_KHR_8bit_storage")
             capability(Spv.CapabilityStorageBuffer8BitAccess)
             capability(Spv.CapabilityUniformAndStorageBuffer8BitAccess)
         }
@@ -697,13 +703,17 @@ class SpirvEmitter(
             capability(Spv.CapabilityShaderLayer)
         } else {
             extension("SPV_EXT_shader_viewport_index_layer")
-            capability(Spv.CapabilityShaderLayer)
+            capability(Spv.CapabilityShaderViewportIndexLayerEXT)
         }
     }
 
     private fun viewportCapability() {
-        if (!version.atLeast(SpirvVersion.V1_5)) extension("SPV_EXT_shader_viewport_index_layer")
-        capability(Spv.CapabilityShaderViewportIndex)
+        if (version.atLeast(SpirvVersion.V1_5)) {
+            capability(Spv.CapabilityShaderViewportIndex)
+        } else {
+            extension("SPV_EXT_shader_viewport_index_layer")
+            capability(Spv.CapabilityShaderViewportIndexLayerEXT)
+        }
     }
 
     fun synthesizedInput(builtin: BuiltinVariable, type: IrType): Int {
@@ -967,7 +977,7 @@ class SpirvEmitter(
         val chain = chain(pointerValue)
         val pointer = materialize(chain)
         val type = instruction.type
-        if (chain.storage.isExplicitlyLaidOut && (type is IrStruct || type is IrArray)) {
+        if (chain.storage.isExplicitlyLaidOut && (type is IrStruct || type is IrArray || containsBool(type))) {
             val loaded = instruction(Spv.OpLoad, type(type, SpirvLayout.Explicit), pointer)
             return convertLayout(loaded, type, SpirvLayout.Explicit, SpirvLayout.Logical)
         }
@@ -993,15 +1003,37 @@ class SpirvEmitter(
             )
             valueId = instruction(Spv.OpFMul, type(VEC4), valueId, flip)
         }
-        if (chain.storage.isExplicitlyLaidOut && (type is IrStruct || type is IrArray)) {
+        if (chain.storage.isExplicitlyLaidOut && (type is IrStruct || type is IrArray || containsBool(type))) {
             valueId = convertLayout(valueId, type, SpirvLayout.Logical, SpirvLayout.Explicit)
         }
         statement(Spv.OpStore, materialize(chain), valueId)
     }
 
+    private fun containsBool(type: IrType): Boolean = when (type) {
+        is IrBool -> true
+        is IrVector -> type.element is IrBool
+        is IrArray -> containsBool(type.element)
+        is IrStruct -> type.members.any { containsBool(it.type) }
+        else -> false
+    }
+
     private fun convertLayout(value: Int, type: IrType, from: SpirvLayout, to: SpirvLayout): Int {
+        if (type is IrBool || type is IrVector && type.element is IrBool) {
+            return if (to == SpirvLayout.Logical) {
+                instruction(Spv.OpINotEqual, type(type), value, constant(Constants.splat(layoutInteger(type), ConstantScalar.int(IrInt.U8, 0L))))
+            } else {
+                val integer = layoutInteger(type)
+                instruction(
+                    Spv.OpSelect,
+                    type(integer),
+                    value,
+                    constant(Constants.splat(integer, ConstantScalar.int(IrInt.U8, 1L))),
+                    constant(Constants.splat(integer, ConstantScalar.int(IrInt.U8, 0L))),
+                )
+            }
+        }
         if (type !is IrStruct && type !is IrArray) return value
-        if (version.atLeast(SpirvVersion.V1_4)) return instruction(Spv.OpCopyLogical, type(type, to), value)
+        if (version.atLeast(SpirvVersion.V1_4) && !containsBool(type)) return instruction(Spv.OpCopyLogical, type(type, to), value)
         return when (type) {
             is IrStruct -> {
                 val members = type.members.mapIndexed { index, member ->
@@ -1012,6 +1044,10 @@ class SpirvEmitter(
             }
 
             is IrArray -> {
+                if (type.isRuntime) {
+                    error("runtime arrays cannot be copied by value")
+                    return value
+                }
                 val elements = List(type.length) { index ->
                     val extracted = instruction(Spv.OpCompositeExtract, type(type.element, from), value, index)
                     convertLayout(extracted, type.element, from, to)
@@ -1022,6 +1058,8 @@ class SpirvEmitter(
             else -> value
         }
     }
+
+    private fun layoutInteger(type: IrType): IrType = if (type is IrVector) IrVector.of(IrInt.U8, type.count) else IrInt.U8
 
     private companion object {
         val UINT3 = IrVector.of(IrInt.U32, 3)
