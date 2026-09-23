@@ -97,7 +97,7 @@ class Lowering(
         for ((index, parameter) in function.parameters.withIndex()) {
             val value = parameters[index]
             val opaque = parameter.type is TextureType || parameter.type is SamplerType ||
-                (parameter.type is ArrayType && ((parameter.type as ArrayType).element is TextureType))
+                (parameter.type is ArrayType && (parameter.type.element is TextureType))
             when {
                 parameter.isReference -> lowering.bind(parameter, Binding(value, false))
                 opaque -> lowering.bind(parameter, Binding(value, true))

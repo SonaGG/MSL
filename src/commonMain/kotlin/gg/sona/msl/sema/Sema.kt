@@ -188,7 +188,7 @@ class Sema(val diagnostics: Diagnostics) {
                         diagnostics.error(member.location, "reference members are not supported")
                         continue
                     }
-                    if (declared.type is ArrayType && (declared.type as ArrayType).isUnsized) {
+                    if (declared.type is ArrayType && declared.type.isUnsized) {
                         diagnostics.error(member.location, "flexible array members are not supported")
                         continue
                     }

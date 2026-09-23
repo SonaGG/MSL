@@ -670,7 +670,9 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 } while (accept(TokenKind.Comma))
             }
             expect(TokenKind.RParen, "to close constructor parameter list")
-            while (acceptKeyword("noexcept") || acceptKeyword("thread") || acceptKeyword("constexpr")) Unit
+            while (true) {
+                if (!acceptKeyword("noexcept") && !acceptKeyword("thread") && !acceptKeyword("constexpr")) break
+            }
             parseAttributes(attributes)
             val initializers = ArrayList<MemberInitializer>()
             if (accept(TokenKind.Colon)) {

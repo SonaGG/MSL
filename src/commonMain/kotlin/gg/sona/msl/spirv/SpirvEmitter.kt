@@ -1054,8 +1054,6 @@ class SpirvEmitter(
                 }
                 instruction(Spv.OpCompositeConstruct, type(type, to), *elements.toIntArray())
             }
-
-            else -> value
         }
     }
 

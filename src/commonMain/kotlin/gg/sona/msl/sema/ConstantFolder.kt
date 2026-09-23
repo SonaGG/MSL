@@ -134,14 +134,14 @@ class ConstantFolder(private val localValues: Map<Variable, ConstValue>) {
     fun components(value: ConstValue): List<ScalarConstant> = when {
         value is ScalarConstant -> listOf(value)
         value is ZeroConstant && value.type is VectorType -> {
-            val vector = value.type as VectorType
+            val vector = value.type
             List(vector.size) { ScalarConstant.of(vector.element, 0L) }
         }
 
         value is CompositeConstant && value.type is VectorType -> value.elements.map { it as ScalarConstant }
         value is CompositeConstant && value.type is MatrixType -> value.elements.flatMap { components(it) }
         value is ZeroConstant && value.type is MatrixType -> {
-            val matrix = value.type as MatrixType
+            val matrix = value.type
             List(matrix.columns * matrix.rows) { ScalarConstant.of(matrix.element, 0L) }
         }
 

@@ -11,7 +11,7 @@ sealed class Type {
         get() = null
 
     val isArithmetic: Boolean
-        get() = (this is ScalarType && !scalarKind!!.isBool) || (this is VectorType && !scalarKind!!.isBool)
+        get() = (this is ScalarType && !scalarKind.isBool) || (this is VectorType && !scalarKind.isBool)
 
     val isNumericScalarOrVector: Boolean
         get() = (this is ScalarType || this is VectorType) && scalarKind != ScalarKind.Bool

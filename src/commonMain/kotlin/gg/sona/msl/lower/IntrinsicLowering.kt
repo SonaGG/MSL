@@ -331,7 +331,6 @@ class IntrinsicLowering(private val lowering: FunctionLowering) {
                     AtomicOperation.Xor -> Intrinsic.AtomicXor
                     AtomicOperation.Min -> if (element is IrInt && element.signed) Intrinsic.AtomicSMin else Intrinsic.AtomicUMin
                     AtomicOperation.Max -> if (element is IrInt && element.signed) Intrinsic.AtomicSMax else Intrinsic.AtomicUMax
-                    else -> error("unexpected atomic operation")
                 }
                 builder.intrinsic(intrinsic, element, listOf(pointer, value), literals)
             }

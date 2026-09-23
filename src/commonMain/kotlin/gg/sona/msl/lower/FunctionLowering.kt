@@ -261,7 +261,7 @@ class FunctionLowering(
         builder.branch(merge)
         if (elseBlock != null) {
             builder.position(elseBlock)
-            statement(statement.elseBranch!!)
+            statement(statement.elseBranch)
             builder.branch(merge)
         }
         builder.position(merge)
