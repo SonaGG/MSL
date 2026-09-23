@@ -25,7 +25,7 @@ class DxilTypes {
             element is LlvmFloatType && element.bits == 16 || element is LlvmIntType && element.bits == 16 -> 8
             else -> 4
         }
-        LlvmStructType("dx.types.CBufRet.${suffix(element)}", List(count) { element })
+        LlvmStructType("dx.types.CBufRet.${suffix(element)}" + if (count == 8) ".8" else "", List(count) { element })
     }
 
     fun resource(name: String, element: LlvmType = LlvmIntType.I32): LlvmStructType = resources.getOrPut(name) { LlvmStructType(name, listOf(element)) }
