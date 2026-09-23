@@ -125,6 +125,11 @@ class EntryPointLowering(private val lowering: Lowering, private val source: Fun
 
     private fun buffer(parameter: LocalVariable, index: Int) {
         val type = parameter.type
+        val pointee = if (parameter.isReference) type else (type as? PointerType)?.pointee
+        if (pointee is StructType && isArgumentBuffer(pointee)) {
+            argumentBuffer(parameter, index, pointee)
+            return
+        }
         if (parameter.isReference) {
             val space = parameter.addressSpace
             val uniform = space == AddressSpace.Constant
@@ -163,6 +168,78 @@ class EntryPointLowering(private val lowering: Lowering, private val source: Fun
         val local = builder.variable(pointer.type, parameter.name)
         builder.store(local, pointer)
         body.bind(parameter, Binding(local, false))
+    }
+
+    private fun isArgumentBuffer(struct: StructType): Boolean = struct.fields.any { field ->
+        val type = (field.type as? ArrayType)?.element ?: field.type
+        type is TextureType || type == SamplerType || type is PointerType || type is StructType && isArgumentBuffer(type)
+    }
+
+    private fun argumentBuffer(parameter: LocalVariable, index: Int, struct: StructType) {
+        val members = HashMap<StructField, Binding>()
+        for (field in struct.fields) {
+            val id = attributes.find(field.attributes, "id")?.let { attributes.integer(it) }
+            if (id == null) {
+                error(field.location, "argument buffer member '${field.name}' requires an [[id(n)]] attribute")
+                continue
+            }
+            val name = "${parameter.name}.${field.name}"
+            val type = field.type
+            val element = (type as? ArrayType)?.element ?: type
+            val binding = when {
+                element is TextureType -> textureBinding(name, type, element, id, index)
+                element == SamplerType -> samplerBinding(name, type, id, index)
+                type is PointerType -> pointerBinding(name, type, id, index, field.location)
+                else -> {
+                    error(field.location, "argument buffer member '${field.name}' of type '$type' is only supported on Metal")
+                    null
+                }
+            } ?: continue
+            members[field] = binding
+        }
+        body.bindArgumentBuffer(parameter, members)
+    }
+
+    private fun textureBinding(name: String, type: Type, texture: TextureType, index: Int, argumentBuffer: Int): Binding {
+        val storage = texture.access == TextureAccess.Write || texture.access == TextureAccess.ReadWrite
+        val variable = GlobalVariable(name, lowering.types.lower(type), StorageClass.UniformConstant)
+        variable.resource = ResourceInfo(
+            if (storage) ResourceKind.StorageTexture else ResourceKind.SampledTexture,
+            index,
+            !storage,
+            arraySize = (type as? ArrayType)?.size ?: 1,
+            argumentBuffer = argumentBuffer,
+        )
+        addInterface(variable)
+        return if (type is ArrayType) Binding(variable, false) else Binding(builder.load(variable), true)
+    }
+
+    private fun samplerBinding(name: String, type: Type, index: Int, argumentBuffer: Int): Binding {
+        val variable = GlobalVariable(name, lowering.types.lower(type), StorageClass.UniformConstant)
+        variable.resource = ResourceInfo(ResourceKind.Sampler, index, true, arraySize = (type as? ArrayType)?.size ?: 1, argumentBuffer = argumentBuffer)
+        addInterface(variable)
+        return if (type is ArrayType) Binding(variable, false) else Binding(builder.load(variable), true)
+    }
+
+    private fun pointerBinding(name: String, type: PointerType, index: Int, argumentBuffer: Int, location: SourceLocation): Binding? {
+        if (type.addressSpace != AddressSpace.Device && type.addressSpace != AddressSpace.Constant) {
+            error(location, "argument buffer pointers must be in the device or constant address space")
+            return null
+        }
+        val element = lowering.types.lower(type.pointee)
+        val array = IrArray(element, 0, TypeLayout.stride(type.pointee))
+        val variable = GlobalVariable(name, array, StorageClass.StorageBuffer)
+        variable.resource = ResourceInfo(
+            ResourceKind.StorageBuffer,
+            index,
+            type.addressSpace == AddressSpace.Constant || type.isConstPointee,
+            argumentBuffer = argumentBuffer,
+        )
+        addInterface(variable)
+        val pointer = builder.accessChain(variable, listOf(ConstantScalar.i32(0)))
+        val local = builder.variable(pointer.type, name)
+        builder.store(local, pointer)
+        return Binding(builder.load(local), true)
     }
 
     private fun texture(parameter: LocalVariable, index: Int) {

@@ -551,7 +551,7 @@ class SpirvEmitter(
                 resource.mslIndex
             }
             val location = options.bindings.locate(
-                ResourceBindingRequest(variable.name, resource.kind, constexprIndex, resource.isConstexprSampler),
+                ResourceBindingRequest(variable.name, resource.kind, constexprIndex, resource.isConstexprSampler, resource.argumentBuffer),
             )
             resource.set = location.set
             resource.binding = location.binding

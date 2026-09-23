@@ -7,4 +7,5 @@ data class ResourceBindingRequest(
     val kind: ResourceKind,
     val mslIndex: Int,
     val isConstexprSampler: Boolean,
+    val argumentBuffer: Int = -1,
 )

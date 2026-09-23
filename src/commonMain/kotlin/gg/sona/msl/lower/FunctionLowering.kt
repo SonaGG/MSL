@@ -67,6 +67,7 @@ import gg.sona.msl.types.PointerType
 import gg.sona.msl.types.SamplerType
 import gg.sona.msl.types.ScalarKind
 import gg.sona.msl.types.ScalarType
+import gg.sona.msl.types.StructField
 import gg.sona.msl.types.StructType
 import gg.sona.msl.types.TextureType
 import gg.sona.msl.types.Type
@@ -82,6 +83,7 @@ class FunctionLowering(
 ) {
     val builder = IrBuilder(function)
     private val bindings = HashMap<LocalVariable, Binding>()
+    private val argumentBuffers = HashMap<LocalVariable, Map<StructField, Binding>>()
     private val frames = ArrayList<Frame>()
     private var returnValue: Instruction? = null
     private var returnFlag: Instruction? = null
@@ -98,6 +100,22 @@ class FunctionLowering(
 
     fun bind(variable: LocalVariable, binding: Binding) {
         bindings[variable] = binding
+    }
+
+    fun bindArgumentBuffer(variable: LocalVariable, members: Map<StructField, Binding>) {
+        argumentBuffers[variable] = members
+    }
+
+    private fun argumentMember(expression: HMember): Binding? {
+        if (argumentBuffers.isEmpty()) return null
+        var base = expression.base
+        if (base is HDeref) base = base.pointer
+        val variable = (base as? HVariableRef)?.variable as? LocalVariable ?: return null
+        val members = argumentBuffers[variable] ?: return null
+        return members[expression.member] ?: run {
+            error(expression.location, "argument buffer member '${expression.member.name}' is not accessible on this target")
+            null
+        }
     }
 
     fun lowerType(type: Type): IrType = types.lower(type)
@@ -450,9 +468,14 @@ class FunctionLowering(
         }
 
         is HMember -> {
-            val base = memoryBase(expression.base)
-            val index = ConstantScalar.i32(expression.member.index)
-            MemoryLValue(builder.accessChain(base.pointer, listOf(index)))
+            val argument = argumentMember(expression)
+            if (argument != null && !argument.isDirect) {
+                MemoryLValue(argument.value)
+            } else {
+                val base = memoryBase(expression.base)
+                val index = ConstantScalar.i32(expression.member.index)
+                MemoryLValue(builder.accessChain(base.pointer, listOf(index)))
+            }
         }
 
         is HIndex -> {
@@ -558,6 +581,7 @@ class FunctionLowering(
     }
 
     private fun member(expression: HMember): Value {
+        argumentMember(expression)?.let { return if (it.isDirect) it.value else builder.load(it.value) }
         val base = expression.base
         if (base.isLvalue && !isOpaque(base.type)) {
             val pointer = memoryBase(base).pointer

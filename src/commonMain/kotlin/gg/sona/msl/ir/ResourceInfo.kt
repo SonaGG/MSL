@@ -8,6 +8,7 @@ class ResourceInfo(
     val readOnly: Boolean,
     val arraySize: Int = 1,
     val samplerState: SamplerState? = null,
+    val argumentBuffer: Int = -1,
 ) {
     var set: Int = 0
     var binding: Int = 0

@@ -9,6 +9,6 @@ fun interface DxilBindingLayout {
     companion object {
         const val CONSTEXPR_SAMPLER_BASE = 16
 
-        val Default = DxilBindingLayout { request -> RegisterLocation(0, request.mslIndex) }
+        val Default = DxilBindingLayout { request -> RegisterLocation(request.argumentBuffer + 1, request.mslIndex) }
     }
 }
