@@ -163,7 +163,7 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
             Intrinsic.TextureCalculateLod -> {
                 e.capability(Spv.CapabilityImageQuery)
                 val image = instruction.operands[0].type as IrImage
-                val sampled = e.instruction(Spv.OpSampledImage, e.sampledImageType(image), args[0], args[1])
+                val sampled = e.instruction(Spv.OpSampledImage, e.sampledImageType(image), args[0], args[1]).also { propagateNonUniform(it, image, args[0], args[1]) }
                 val lod = e.instruction(Spv.OpImageQueryLod, type(IrVector.of(IrFloat.F32, 2)), sampled, args[2])
                 e.instruction(Spv.OpCompositeExtract, type(IrFloat.F32), lod, if (instruction.literals[1] == 1) 0 else 1)
             }
@@ -297,6 +297,7 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
         val offset = arguments.take(TextureOperands.Offset)
         val compare = arguments.take(TextureOperands.Compare)
         val sampledImage = e.instruction(Spv.OpSampledImage, e.sampledImageType(image), e.operand(instruction.operands[0]), sampler)
+            .also { propagateNonUniform(it, image, e.operand(instruction.operands[0]), sampler) }
         val coordinate = coordinate(image, e.operand(coordinateValue), coordinateValue.type, arrayIndex, false)
         val explicit = lod != null || gradient != null || e.stage != ShaderStage.Fragment
         var mask = 0
@@ -350,6 +351,7 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
         val offset = arguments.take(TextureOperands.Offset)
         val compare = arguments.take(TextureOperands.Compare)
         val sampledImage = e.instruction(Spv.OpSampledImage, e.sampledImageType(image), e.operand(instruction.operands[0]), sampler)
+            .also { propagateNonUniform(it, image, e.operand(instruction.operands[0]), sampler) }
         val coordinate = coordinate(image, e.operand(coordinateValue), coordinateValue.type, arrayIndex, false)
         val full = IntList()
         full.add(sampledImage)
@@ -587,6 +589,10 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
                 e.instruction(Spv.OpGroupNonUniformShuffle, resultType, subgroup(), value, lane)
             }
         }
+    }
+
+    private fun propagateNonUniform(result: Int, image: IrImage, texture: Int, sampler: Int) {
+        if (texture in e.nonUniformIds || sampler in e.nonUniformIds) e.decorateNonUniform(result, image)
     }
 
     companion object {

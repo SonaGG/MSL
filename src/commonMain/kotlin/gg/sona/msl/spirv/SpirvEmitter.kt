@@ -982,9 +982,36 @@ class SpirvEmitter(
             return convertLayout(loaded, type, SpirvLayout.Explicit, SpirvLayout.Logical)
         }
         val loaded = instruction(Spv.OpLoad, type(type), pointer)
+        if (chain.storage == StorageClass.UniformConstant && hasDynamicIndex(pointerValue)) {
+            decorateNonUniform(pointer, type)
+            decorateNonUniform(loaded, type)
+        }
         val global = pointerValue as? GlobalVariable
         val builtin = global?.interfaceInfo?.builtin
         return loaded.also { if (builtin != null && global.valueType != type) error("builtin type mismatch") }
+    }
+
+    val nonUniformIds = HashSet<Int>()
+
+    private fun hasDynamicIndex(value: Value): Boolean {
+        var current = value
+        while (current is Instruction && (current.opcode == Opcode.AccessChain || current.opcode == Opcode.PtrOffset)) {
+            if (current.operands.drop(1).any { it !is IrConstant }) return true
+            current = current.operands[0]
+        }
+        return false
+    }
+
+    fun decorateNonUniform(id: Int, type: IrType) {
+        if (!version.atLeast(SpirvVersion.V1_5)) extension("SPV_EXT_descriptor_indexing")
+        capability(Spv.CapabilityShaderNonUniform)
+        val image = type as? IrImage
+        if (image != null && image.access.isStorage) {
+            capability(Spv.CapabilityStorageImageArrayNonUniformIndexing)
+        } else {
+            capability(Spv.CapabilitySampledImageArrayNonUniformIndexing)
+        }
+        if (nonUniformIds.add(id)) decorate(id, Spv.DecorationNonUniform)
     }
 
     private fun store(instruction: Instruction) {

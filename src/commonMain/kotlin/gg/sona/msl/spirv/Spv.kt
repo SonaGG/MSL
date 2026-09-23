@@ -231,6 +231,9 @@ object Spv {
     const val CapabilityShaderLayer = 69
     const val CapabilityShaderViewportIndex = 70
     const val CapabilityShaderViewportIndexLayerEXT = 5254
+    const val CapabilityShaderNonUniform = 5301
+    const val CapabilitySampledImageArrayNonUniformIndexing = 5307
+    const val CapabilityStorageImageArrayNonUniformIndexing = 5308
     const val CapabilityMinLod = 42
     const val CapabilityDrawParameters = 4427
     const val CapabilityStorageBuffer16BitAccess = 4433
@@ -280,6 +283,7 @@ object Spv {
 
     const val DecorationSpecId = 1
     const val DecorationBlock = 2
+    const val DecorationNonUniform = 5300
     const val DecorationColMajor = 5
     const val DecorationArrayStride = 6
     const val DecorationMatrixStride = 7
