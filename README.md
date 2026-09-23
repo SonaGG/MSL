@@ -27,3 +27,5 @@ Native Metal AIR support is currently under active development.
 ## Licensing
 
 This project is licensed under Apache License 2.0. For more details, read [LICENSE.md](/LICENSE.md)
+
+Metal is a trademark of Apple Inc. MSL is an independent project and is not affiliated with, sponsored by, or endorsed by Apple Inc.
