@@ -1,5 +1,6 @@
 package gg.sona.msl.opt
 
+import gg.sona.msl.ir.ConstantScalar
 import gg.sona.msl.ir.EntryPoint
 import gg.sona.msl.ir.GlobalVariable
 import gg.sona.msl.ir.Instruction
@@ -53,7 +54,14 @@ object InterfaceHints {
         val type = global.valueType as? IrVector ?: return
         val lanes = HashSet<Int>()
         for (load in live) {
-            if (load.operands[0] !== global) return
+            val pointer = load.operands[0]
+            if (pointer !== global) {
+                val chain = pointer as? Instruction ?: return
+                val lane = (chain.operands.getOrNull(1) as? ConstantScalar)?.bits?.toInt() ?: return
+                if (chain.opcode != Opcode.AccessChain || chain.operands.size != 2) return
+                lanes.add(lane)
+                continue
+            }
             for (user in uses.of(load)) {
                 when (user.opcode) {
                     Opcode.CompositeExtract -> if (user.literals.size == 1) lanes.add(user.literals[0]) else return
