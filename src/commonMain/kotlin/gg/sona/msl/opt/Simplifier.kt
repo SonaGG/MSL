@@ -126,6 +126,10 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
                 isValue(ops[0], 0.0) -> at(instruction).unary(Opcode.FNeg, type, ops[1])
                 ops[0] === ops[1] -> zero(type)
                 isOp(ops[1], Opcode.FNeg) -> at(instruction).binary(Opcode.FAdd, type, ops[0], (ops[1] as Instruction).operands[0])
+                isOp(ops[0], Opcode.FNeg) -> at(instruction).let { builder ->
+                    builder.unary(Opcode.FNeg, type, builder.binary(Opcode.FAdd, type, (ops[0] as Instruction).operands[0], ops[1]))
+                }
+
                 ops[1] is IrConstant && ConstantFolding.isFoldable(ops[1]) -> negate(ops[1] as IrConstant)?.let { at(instruction).binary(Opcode.FAdd, type, ops[0], it) }
                 else -> null
             }
@@ -138,6 +142,14 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
                 isValue(ops[0], -1.0) -> at(instruction).unary(Opcode.FNeg, type, ops[1])
                 isOp(ops[0], Opcode.FNeg) && isOp(ops[1], Opcode.FNeg) ->
                     at(instruction).binary(Opcode.FMul, type, (ops[0] as Instruction).operands[0], (ops[1] as Instruction).operands[0])
+
+                isOp(ops[0], Opcode.FNeg) && ops[0].type == type -> at(instruction).let { builder ->
+                    builder.unary(Opcode.FNeg, type, builder.binary(Opcode.FMul, type, (ops[0] as Instruction).operands[0], ops[1]))
+                }
+
+                isOp(ops[1], Opcode.FNeg) && ops[1].type == type -> at(instruction).let { builder ->
+                    builder.unary(Opcode.FNeg, type, builder.binary(Opcode.FMul, type, ops[0], (ops[1] as Instruction).operands[0]))
+                }
 
                 else -> reassociate(instruction)
             }
@@ -343,13 +355,15 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
         val kind = MIN_MAX[compare.opcode] ?: return null
         val (a, b) = compare.operands
         val intrinsic = when {
-            whenTrue === a && whenFalse === b -> kind.first
-            whenTrue === b && whenFalse === a -> kind.second
+            same(whenTrue, a) && same(whenFalse, b) -> kind.first
+            same(whenTrue, b) && same(whenFalse, a) -> kind.second
             else -> return null
         }
-        if (instruction.type != a.type || !native(intrinsic, instruction)) return null
+        if (instruction.type != a.type || !native(intrinsic, compare)) return null
         return at(instruction).intrinsic(intrinsic, instruction.type, listOf(a, b))
     }
+
+    private fun same(a: Value, b: Value): Boolean = a === b || a is IrConstant && a == b
 
     private fun extract(instruction: Instruction, composite: Value, path: IntArray): Value? {
         if (path.isEmpty()) return composite
