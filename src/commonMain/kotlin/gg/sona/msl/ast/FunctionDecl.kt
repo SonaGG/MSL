@@ -14,4 +14,6 @@ class FunctionDecl(
     val templateParameters: List<TemplateParameter>?,
     val isConstMethod: Boolean,
     override val location: SourceLocation,
+    val isConstructor: Boolean = false,
+    val memberInitializers: List<MemberInitializer> = emptyList(),
 ) : Decl()

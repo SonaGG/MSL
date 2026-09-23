@@ -11,6 +11,7 @@ import gg.sona.msl.hir.HBitcast
 import gg.sona.msl.hir.HBlock
 import gg.sona.msl.hir.HBreak
 import gg.sona.msl.hir.HCall
+import gg.sona.msl.hir.HConstructorCall
 import gg.sona.msl.hir.HComma
 import gg.sona.msl.hir.HCompoundAssign
 import gg.sona.msl.hir.HConditional
@@ -325,6 +326,7 @@ class FunctionLowering(
 
     fun rvalueOrVoid(expression: HExpr): Value? = when (expression) {
         is HCall -> call(expression)
+        is HConstructorCall -> constructorCall(expression)
         is HIntrinsic -> intrinsics.intrinsic(expression)
         is HTextureOperation -> intrinsics.texture(expression)
         is HAtomic -> intrinsics.atomic(expression)
@@ -403,6 +405,8 @@ class FunctionLowering(
             error(expression.location, "void value used in expression")
             types.zero(lowerType(expression.type))
         }
+
+        is HConstructorCall -> constructorCall(expression)
 
         is HIntrinsic -> intrinsics.intrinsic(expression) ?: types.zero(lowerType(expression.type))
         is HTextureOperation -> intrinsics.texture(expression) ?: types.zero(lowerType(expression.type))
@@ -885,25 +889,34 @@ class FunctionLowering(
     private fun call(expression: HCall): Value? {
         val callee = lowering.functionFor(expression.function, expression.location) ?: return null
         val parameters = expression.function.parameters
-        val arguments = expression.arguments.mapIndexed { index, argument ->
-            val parameter = parameters[index]
-            when {
-                parameter.isReference -> {
-                    if (argument.isLvalue && argument.lvalueAddressSpace == parameter.addressSpace) {
-                        address(lvalue(argument), argument.location)
-                    } else {
-                        val value = rvalue(argument)
-                        val temporary = builder.variable(value.type)
-                        builder.store(temporary, value)
-                        temporary
-                    }
-                }
-
-                else -> rvalue(argument)
-            }
-        }
+        val arguments = expression.arguments.mapIndexed { index, argument -> argument(parameters[index], argument) }
         val result = builder.call(callee, arguments)
         return if (expression.function.returnType == VoidType) null else result
+    }
+
+    private fun constructorCall(expression: HConstructorCall): Value {
+        val type = lowerType(expression.struct)
+        val callee = lowering.functionFor(expression.constructor, expression.location) ?: return types.zero(type)
+        val parameters = expression.constructor.parameters
+        val temporary = builder.variable(type)
+        val arguments = expression.arguments.mapIndexed { index, argument -> argument(parameters[index + 1], argument) }
+        builder.call(callee, listOf(temporary) + arguments)
+        return builder.load(temporary)
+    }
+
+    private fun argument(parameter: LocalVariable, argument: HExpr): Value = when {
+        parameter.isReference -> {
+            if (argument.isLvalue && argument.lvalueAddressSpace == parameter.addressSpace) {
+                address(lvalue(argument), argument.location)
+            } else {
+                val value = rvalue(argument)
+                val temporary = builder.variable(value.type)
+                builder.store(temporary, value)
+                temporary
+            }
+        }
+
+        else -> rvalue(argument)
     }
 
     fun isVoid(type: Type): Boolean = type == VoidType

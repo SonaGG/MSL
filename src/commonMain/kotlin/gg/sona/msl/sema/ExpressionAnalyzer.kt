@@ -61,6 +61,7 @@ import gg.sona.msl.types.SampleOptionKind
 import gg.sona.msl.types.SampleOptionType
 import gg.sona.msl.types.ScalarKind
 import gg.sona.msl.types.ScalarType
+import gg.sona.msl.types.StructField
 import gg.sona.msl.types.StructType
 import gg.sona.msl.types.TextureType
 import gg.sona.msl.types.Type
@@ -199,7 +200,7 @@ class ExpressionAnalyzer(private val sema: Sema) {
         is TypeSymbol -> error(location, "'$name' is a type, not a value")
         is FunctionSymbol -> error(location, "function '$name' cannot be used as a value")
         is NamespaceSymbol -> error(location, "'$name' is a namespace, not a value")
-        is AliasTemplateSymbol -> error(location, "'$name' is a type template, not a value")
+        is AliasTemplateSymbol, is StructTemplateSymbol -> error(location, "'$name' is a type template, not a value")
     }
 
     private fun thisPointer(scope: Scope, location: SourceLocation): HExpr {
@@ -212,6 +213,10 @@ class ExpressionAnalyzer(private val sema: Sema) {
         val operand = analyze(expression.operand, scope)
         if (isError(operand)) return operand
         val type = ConversionRules.valueType(operand.type)
+        if (type is StructType) {
+            val spelling = UNARY_SPELLINGS[expression.operator]
+            if (spelling != null) overloaded(spelling, operand, emptyList(), listOf(expression.operand), scope, location)?.let { return it }
+        }
         return when (expression.operator) {
             UnaryOperator.Plus -> {
                 if (!type.isNumericScalarOrVector && type !is MatrixType) return error(location, "invalid operand to unary '+'")
@@ -319,7 +324,33 @@ class ExpressionAnalyzer(private val sema: Sema) {
         val left = analyze(expression.left, scope)
         val right = analyze(expression.right, scope)
         if (isError(left) || isError(right)) return errorExpression(location)
+        if (ConversionRules.valueType(left.type) is StructType || ConversionRules.valueType(right.type) is StructType) {
+            overloaded(expression.operator.spelling, left, listOf(expression.right), listOf(expression.left, expression.right), scope, location)
+                ?.let { return it }
+        }
         return binaryOperation(OPERATORS.getValue(expression.operator), left, right, location)
+    }
+
+    private fun overloaded(
+        spelling: String,
+        left: HExpr,
+        memberArguments: List<Expr>,
+        freeArguments: List<Expr>,
+        scope: Scope,
+        location: SourceLocation,
+    ): HExpr? {
+        val name = "operator$spelling"
+        val leftType = ConversionRules.valueType(left.type)
+        if (leftType is StructType) {
+            val methods = sema.methodSets[leftType]
+            if (methods != null && methods.methods.containsKey(name)) {
+                return sema.calls.resolveMethodCall(left, methods, name, memberArguments, scope, location) ?: errorExpression(location)
+            }
+        }
+        val symbol = lookupSimple(name, scope) as? FunctionSymbol
+            ?: (leftType as? StructType)?.let { sema.structScopes[it]?.parent?.lookup(name) as? FunctionSymbol }
+            ?: return null
+        return sema.calls.resolveCall(symbol, null, freeArguments, scope, location) ?: errorExpression(location)
     }
 
     fun binaryOperation(operator: HBinaryOperator, left: HExpr, right: HExpr, location: SourceLocation): HExpr {
@@ -511,6 +542,12 @@ class ExpressionAnalyzer(private val sema: Sema) {
         }
         val value = analyze(expression.value, scope)
         if (isError(value)) return value
+        if (ConversionRules.valueType(target.type) is StructType) {
+            overloaded(operator.spelling + "=", target, listOf(expression.value), listOf(expression.target, expression.value), scope, location)
+                ?.let { return it }
+            overloaded(operator.spelling, target, listOf(expression.value), listOf(expression.target, expression.value), scope, location)
+                ?.let { return HAssign(target, convertImplicitly(it, target.type, "assignment"), location) }
+        }
         val operation = binaryOperation(OPERATORS.getValue(operator), target, value, location)
         return when (operation) {
             is HBinary -> {
@@ -585,6 +622,11 @@ class ExpressionAnalyzer(private val sema: Sema) {
             }
 
             is TypeSymbol -> return construct(symbol.type, arguments, false, scope, location)
+            is StructTemplateSymbol -> {
+                val struct = sema.instantiateStruct(symbol, callee.templateArguments ?: emptyList(), location) ?: return errorExpression(location)
+                return construct(struct, arguments, false, scope, location)
+            }
+
             null -> Unit
             else -> return error(location, "called object '$name' is not a function")
         }
@@ -687,6 +729,9 @@ class ExpressionAnalyzer(private val sema: Sema) {
         val base = analyze(expression.base, scope)
         val index = analyze(expression.index, scope)
         if (isError(base) || isError(index)) return errorExpression(location)
+        if (ConversionRules.valueType(base.type) is StructType) {
+            overloaded("[]", base, listOf(expression.index), listOf(expression.base, expression.index), scope, location)?.let { return it }
+        }
         val indexType = ConversionRules.valueType(index.type)
         val indexValue = when {
             indexType is ScalarType && indexType.kind.isInteger -> index
@@ -884,6 +929,14 @@ class ExpressionAnalyzer(private val sema: Sema) {
 
     private fun aggregate(type: StructType, arguments: List<Expr>, braced: Boolean, scope: Scope, location: SourceLocation): HExpr {
         if (!type.isComplete) return error(location, "incomplete type '$type'")
+        val methods = sema.methodSets[type]
+        if (methods != null && methods.constructors.isNotEmpty()) {
+            if (arguments.size == 1 && arguments[0] !is InitListExpr) {
+                val value = analyze(arguments[0], scope, type)
+                if (ConversionRules.valueType(value.type) == type) return value
+            }
+            return sema.calls.resolveConstructor(methods, arguments, scope, location) ?: errorExpression(location)
+        }
         if (arguments.size == 1 && arguments[0] !is InitListExpr) {
             val value = analyze(arguments[0], scope, type.fields.firstOrNull()?.type)
             if (ConversionRules.valueType(value.type) == type) return value
@@ -895,12 +948,24 @@ class ExpressionAnalyzer(private val sema: Sema) {
         if (type.isUnion && arguments.size > 1) return error(location, "too many initializers for union '$type'")
         val elements = type.fields.mapIndexed { index, field ->
             val argument = arguments.getOrNull(index)
-            if (argument == null) zero(field.type, location) else coerceInitializer(argument, field.type, scope)
+            if (argument == null) defaultValue(field, location) else coerceInitializer(argument, field.type, scope)
         }
         if (!braced && arguments.isNotEmpty()) {
             diagnostics.warning(location, "parenthesized aggregate initialization of '$type'")
         }
         return HConstruct(type, elements, location)
+    }
+
+    fun defaultValue(field: StructField, location: SourceLocation): HExpr {
+        val default = sema.fieldDefaults[field] ?: return zero(field.type, location)
+        return coerceInitializer(default.expression, field.type, default.scope)
+    }
+
+    fun needsDefaultConstruction(type: Type): Boolean {
+        val struct = type as? StructType ?: return false
+        val methods = sema.methodSets[struct]
+        if (methods != null && methods.constructors.isNotEmpty()) return true
+        return struct.fields.any { it in sema.fieldDefaults || needsDefaultConstruction(it.type) }
     }
 
     private fun zero(type: Type, location: SourceLocation): HExpr = HLiteral(ConstantFolder(emptyMap()).zero(ConversionRules.valueType(type)), location)
@@ -943,6 +1008,13 @@ class ExpressionAnalyzer(private val sema: Sema) {
     }
 
     private companion object {
+        val UNARY_SPELLINGS = mapOf(
+            UnaryOperator.Plus to "+",
+            UnaryOperator.Minus to "-",
+            UnaryOperator.LogicalNot to "!",
+            UnaryOperator.BitwiseNot to "~",
+        )
+
         val OPERATORS = mapOf(
             BinaryOperator.Add to HBinaryOperator.Add,
             BinaryOperator.Subtract to HBinaryOperator.Subtract,

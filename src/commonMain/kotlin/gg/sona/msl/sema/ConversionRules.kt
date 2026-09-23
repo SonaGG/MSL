@@ -104,6 +104,7 @@ object ConversionRules {
             source is EnumType && target is EnumType -> true
             source is ScalarType && target is EnumType -> true
             source is EnumType && target is VectorType -> true
+            source is EnumType && target is ScalarType -> true
             source is PointerType && target is PointerType -> source.addressSpace == target.addressSpace
             source is MatrixType && target is MatrixType ->
                 source.columns == target.columns && source.rows == target.rows

@@ -49,6 +49,7 @@ class Sema(val diagnostics: Diagnostics) {
     val structs = ArrayList<StructType>()
     val methodSets = HashMap<StructType, MethodSet>()
     val structScopes = HashMap<StructType, Scope>()
+    val fieldDefaults = HashMap<StructField, FieldDefault>()
 
     val types = TypeResolver(this)
     val expressions = ExpressionAnalyzer(this)
@@ -157,7 +158,12 @@ class Sema(val diagnostics: Diagnostics) {
 
     fun declareStruct(declaration: StructDecl, scope: Scope): StructType? {
         if (declaration.templateParameters != null) {
-            diagnostics.error(declaration.location, "struct templates are not supported")
+            val templateName = declaration.name ?: run {
+                diagnostics.error(declaration.location, "anonymous struct templates are not supported")
+                return null
+            }
+            val existing = scope.lookupLocal(templateName) as? StructTemplateSymbol
+            if (existing == null || declaration.isDefinition) scope.symbols[templateName] = StructTemplateSymbol(declaration, scope)
             return null
         }
         val name = declaration.name ?: uniqueName("__anonymous_struct_")
@@ -186,14 +192,17 @@ class Sema(val diagnostics: Diagnostics) {
                         diagnostics.error(member.location, "flexible array members are not supported")
                         continue
                     }
-                    if (member.defaultValue != null) {
-                        diagnostics.warning(member.location, "default member initializer for '${member.name}' is ignored")
-                    }
                     val alignment = alignment(member.attributes, memberScope)
-                    fields.add(StructField(member.name, declared.type, member.attributes, fields.size, member.location, alignment))
+                    val field = StructField(member.name, declared.type, member.attributes, fields.size, member.location, alignment)
+                    member.defaultValue?.let { fieldDefaults[field] = FieldDefault(it, memberScope) }
+                    fields.add(field)
                 }
 
-                is FunctionDecl -> methods.methods.getOrPut(member.name) { ArrayList() }.add(member)
+                is FunctionDecl -> if (member.isConstructor) {
+                    methods.constructors.add(member)
+                } else {
+                    methods.methods.getOrPut(member.name) { ArrayList() }.add(member)
+                }
                 is StaticAssertDecl -> Unit
                 else -> declare(member, memberScope)
             }
@@ -282,6 +291,43 @@ class Sema(val diagnostics: Diagnostics) {
             }
         }
         return types.resolve(symbol.declaration.type, bound)
+    }
+
+    fun instantiateStruct(symbol: StructTemplateSymbol, arguments: List<TemplateArgument>, location: SourceLocation): StructType? {
+        val declaration = symbol.declaration
+        val parameters = declaration.templateParameters!!
+        val bound = Scope(symbol.scope)
+        val key = ArrayList<Any>()
+        for ((index, parameter) in parameters.withIndex()) {
+            val argument = arguments.getOrNull(index)
+            if (parameter.isType) {
+                val type = when {
+                    argument != null -> types.typeArgument(argument, symbol.scope)
+                    parameter.defaultType != null -> types.resolve(parameter.defaultType, bound)
+                    else -> null
+                } ?: run {
+                    diagnostics.error(location, "missing template argument '${parameter.name}'")
+                    return null
+                }
+                bound.symbols[parameter.name] = TypeSymbol(type)
+                key.add(type)
+            } else {
+                val expression = (argument as? ExpressionTemplateArgument)?.expression ?: parameter.defaultValue
+                val value = expression?.let { fold(expressions.analyze(it, symbol.scope)) } ?: run {
+                    diagnostics.error(location, "missing template argument '${parameter.name}'")
+                    return null
+                }
+                bound.symbols[parameter.name] = ConstantSymbol(value)
+                key.add(value)
+            }
+        }
+        symbol.instances[key]?.let { return it }
+        val name = declaration.name + key.joinToString(prefix = "<", postfix = ">")
+        val concrete = StructDecl(name, declaration.members, declaration.attributes, null, declaration.isUnion, declaration.isDefinition, declaration.location)
+        val struct = declareStruct(concrete, bound) ?: return null
+        bound.symbols[declaration.name!!] = TypeSymbol(struct)
+        symbol.instances[key] = struct
+        return struct
     }
 
     private fun declareNamespace(declaration: NamespaceDecl, scope: Scope) {

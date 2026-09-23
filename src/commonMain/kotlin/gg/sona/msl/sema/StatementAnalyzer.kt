@@ -19,6 +19,8 @@ import gg.sona.msl.ast.Stmt
 import gg.sona.msl.ast.StructDecl
 import gg.sona.msl.ast.SwitchStmt
 import gg.sona.msl.ast.TypeAliasDecl
+import gg.sona.msl.ast.UsingDecl
+import gg.sona.msl.ast.UsingNamespaceDecl
 import gg.sona.msl.ast.VarDecl
 import gg.sona.msl.ast.WhileStmt
 import gg.sona.msl.hir.EnumConstant
@@ -77,7 +79,7 @@ class StatementAnalyzer(private val sema: Sema) {
             for (declaration in statement.declarations) {
                 when (declaration) {
                     is VarDecl -> local(declaration, scope)?.let { result.add(it) }
-                    is StructDecl, is EnumDecl, is TypeAliasDecl -> sema.declare(declaration, scope)
+                    is StructDecl, is EnumDecl, is TypeAliasDecl, is UsingNamespaceDecl, is UsingDecl -> sema.declare(declaration, scope)
                     is StaticAssertDecl -> sema.checkStaticAssert(declaration, scope)
                     is FunctionDecl -> diagnostics.error(declaration.location, "nested functions are not allowed")
                     else -> diagnostics.error(declaration.location, "unexpected declaration in function body")
@@ -289,6 +291,9 @@ class StatementAnalyzer(private val sema: Sema) {
             } else {
                 sema.expressions.coerceInitializer(it, type, scope)
             }
+        }
+        if (initializer == null && type != AutoType && sema.expressions.needsDefaultConstruction(type)) {
+            initializer = sema.expressions.construct(type, emptyList(), true, scope, location)
         }
         if (type == AutoType) {
             if (initializer == null) {

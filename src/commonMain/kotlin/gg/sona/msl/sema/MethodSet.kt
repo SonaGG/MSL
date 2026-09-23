@@ -7,4 +7,6 @@ import gg.sona.msl.types.StructType
 class MethodSet(val struct: StructType, val scope: Scope) {
     val methods = HashMap<String, MutableList<FunctionDecl>>()
     val instances = HashMap<Pair<FunctionDecl, AddressSpace>, ConcreteOverload>()
+    val constructors = ArrayList<FunctionDecl>()
+    val constructorInstances = HashMap<FunctionDecl, ConcreteOverload>()
 }

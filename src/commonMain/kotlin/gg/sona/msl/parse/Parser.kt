@@ -33,6 +33,7 @@ import gg.sona.msl.ast.IndexExpr
 import gg.sona.msl.ast.InitListExpr
 import gg.sona.msl.ast.IntLiteralExpr
 import gg.sona.msl.ast.MemberExpr
+import gg.sona.msl.ast.MemberInitializer
 import gg.sona.msl.ast.NameExpr
 import gg.sona.msl.ast.NamedTypeSyntax
 import gg.sona.msl.ast.NamespaceDecl
@@ -555,7 +556,8 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         }
         val structName = if (context == DeclContext.Struct) enclosingStructName else null
         if (structName != null && current.isIdentifier(structName) && peek(1).kind == TokenKind.LParen) {
-            fail("constructors are not supported")
+            out.add(parseConstructor(structName, specifiers, attributes, templateParameters))
+            return
         }
         if (at(TokenKind.Tilde)) fail("destructors are not supported")
         val base: NamedTypeSyntax = when {
@@ -576,7 +578,8 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             }
 
             atKeyword("enum") -> {
-                val isElaborated = peek(1).kind == TokenKind.Identifier && peek(2).kind != TokenKind.LBrace &&
+                val isElaborated = peek(1).kind == TokenKind.Identifier && !peek(1).isIdentifier("class") &&
+                    !peek(1).isIdentifier("struct") && peek(2).kind != TokenKind.LBrace &&
                     peek(2).kind != TokenKind.Colon && peek(2).kind != TokenKind.Semicolon
                 if (isElaborated) {
                     advance()
@@ -600,7 +603,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             val nameToken = declarator.name!!
             val name = nameToken.text
             val location = nameToken.location
-            if (at(TokenKind.LParen) && isFunctionDeclarator()) {
+            if (context != DeclContext.Block && at(TokenKind.LParen) && isFunctionDeclarator()) {
                 if (!first) fail("function declarations cannot share a declaration with other declarators")
                 val function = parseFunctionRest(specifiers, stage, type, name, location, attributes, templateParameters)
                 out.add(function)
@@ -648,6 +651,88 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     private var enclosingStructName: String? = null
+
+    private fun parseConstructor(
+        structName: String,
+        specifiers: DeclSpecifiers,
+        attributes: MutableList<Attribute>,
+        templateParameters: List<TemplateParameter>?,
+    ): FunctionDecl {
+        val location = advance().location
+        expect(TokenKind.LParen, "to open constructor parameter list")
+        pushScope()
+        try {
+            val parameters = ArrayList<ParamDecl>()
+            if (atKeyword("void") && peek(1).kind == TokenKind.RParen) advance()
+            if (!at(TokenKind.RParen)) {
+                do {
+                    parameters.add(parseParameter())
+                } while (accept(TokenKind.Comma))
+            }
+            expect(TokenKind.RParen, "to close constructor parameter list")
+            while (acceptKeyword("noexcept") || acceptKeyword("thread") || acceptKeyword("constexpr")) Unit
+            parseAttributes(attributes)
+            val initializers = ArrayList<MemberInitializer>()
+            if (accept(TokenKind.Colon)) {
+                do {
+                    val member = expectIdentifier("as member initializer")
+                    if (at(TokenKind.LBrace)) {
+                        initializers.add(MemberInitializer(member.text, parseInitList().elements, true, member.location))
+                    } else {
+                        expect(TokenKind.LParen, "after member initializer name")
+                        initializers.add(MemberInitializer(member.text, parseArguments(), false, member.location))
+                    }
+                } while (accept(TokenKind.Comma))
+            }
+            val body = when {
+                at(TokenKind.LBrace) -> parseBlock(pushNewScope = false)
+                accept(TokenKind.Equal) -> {
+                    val kind = expectIdentifier("after '='")
+                    if (kind.text == "delete") fail("deleted constructors are not supported", kind.location)
+                    expect(TokenKind.Semicolon, "after constructor declaration")
+                    BlockStmt(emptyList(), location)
+                }
+
+                accept(TokenKind.Semicolon) -> null
+                else -> fail("expected constructor body")
+            }
+            val returnType = NamedTypeSyntax(QualifiedName(listOf("void")), null, false, false, AddressSpace.Unspecified, location)
+            return FunctionDecl(
+                specifiers,
+                null,
+                returnType,
+                structName,
+                parameters,
+                body,
+                attributes,
+                templateParameters,
+                false,
+                location,
+                isConstructor = true,
+                memberInitializers = initializers,
+            )
+        } finally {
+            popScope()
+        }
+    }
+
+    private fun parseOperatorName(token: Token): Token {
+        val spelling = when {
+            accept(TokenKind.LParen) -> {
+                expect(TokenKind.RParen, "after 'operator('")
+                "()"
+            }
+
+            accept(TokenKind.LBracket) -> {
+                expect(TokenKind.RBracket, "after 'operator['")
+                "[]"
+            }
+
+            current.kind.isPunctuator && current.kind in OVERLOADABLE -> advance().text
+            else -> fail("conversion operators are not supported")
+        }
+        return Token(TokenKind.Identifier, "operator$spelling", token.location)
+    }
 
     private fun isFunctionDeclarator(): Boolean {
         if (peek(1).kind == TokenKind.RParen) return true
@@ -912,7 +997,9 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             }
         }
         var nameToken: Token? = null
-        if (at(TokenKind.Identifier) && current.text !in NON_DECLARATOR_KEYWORDS) {
+        if (atKeyword("operator")) {
+            nameToken = parseOperatorName(advance())
+        } else if (at(TokenKind.Identifier) && current.text !in NON_DECLARATOR_KEYWORDS) {
             nameToken = advance()
         } else if (requireName) {
             fail("expected declarator name, found '${describe(current)}'")
@@ -1391,6 +1478,16 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         )
 
         val PARAMETER_KEYWORDS = setOf("void")
+
+        val OVERLOADABLE = setOf(
+            TokenKind.Plus, TokenKind.Minus, TokenKind.Star, TokenKind.Slash, TokenKind.Percent, TokenKind.Amp,
+            TokenKind.Pipe, TokenKind.Caret, TokenKind.Tilde, TokenKind.Bang, TokenKind.Less, TokenKind.Greater,
+            TokenKind.LessEqual, TokenKind.GreaterEqual, TokenKind.EqualEqual, TokenKind.BangEqual, TokenKind.LessLess,
+            TokenKind.GreaterGreater, TokenKind.PlusEqual, TokenKind.MinusEqual, TokenKind.StarEqual,
+            TokenKind.SlashEqual, TokenKind.PercentEqual, TokenKind.AmpEqual, TokenKind.PipeEqual, TokenKind.CaretEqual,
+            TokenKind.LessLessEqual, TokenKind.GreaterGreaterEqual, TokenKind.PlusPlus, TokenKind.MinusMinus,
+            TokenKind.Equal,
+        )
 
         val NON_DECLARATOR_KEYWORDS = setOf("const", "volatile", "override", "final")
 

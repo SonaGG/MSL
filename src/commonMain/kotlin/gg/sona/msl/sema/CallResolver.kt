@@ -14,7 +14,14 @@ import gg.sona.msl.ast.TypeSyntax
 import gg.sona.msl.ast.TypeTemplateArgument
 import gg.sona.msl.hir.ConstValue
 import gg.sona.msl.hir.Function
+import gg.sona.msl.hir.HAssign
+import gg.sona.msl.hir.HBlock
 import gg.sona.msl.hir.HCall
+import gg.sona.msl.hir.HConstructorCall
+import gg.sona.msl.hir.HExprStatement
+import gg.sona.msl.hir.HMember
+import gg.sona.msl.hir.HStmt
+import gg.sona.msl.hir.HVariableRef
 import gg.sona.msl.hir.HExpr
 import gg.sona.msl.hir.LocalVariable
 import gg.sona.msl.hir.ScalarConstant
@@ -24,6 +31,7 @@ import gg.sona.msl.types.ArrayType
 import gg.sona.msl.types.MatrixType
 import gg.sona.msl.types.PointerType
 import gg.sona.msl.types.ScalarType
+import gg.sona.msl.types.StructType
 import gg.sona.msl.types.TextureType
 import gg.sona.msl.types.Type
 import gg.sona.msl.types.VectorType
@@ -120,8 +128,52 @@ class CallResolver(private val sema: Sema) {
         }
         sema.declareParameterVariables(function, scope)
         function.isBeingAnalyzed = true
-        function.body = sema.statements.analyzeFunctionBody(declaration.body!!, scope, function)
+        val prologue = if (declaration.isConstructor && owner != null) constructorPrologue(declaration, owner, function, scope) else emptyList()
+        val body = sema.statements.analyzeFunctionBody(declaration.body!!, scope, function)
+        function.body = if (prologue.isEmpty()) body else HBlock(prologue + body.statements, body.location)
         function.isBeingAnalyzed = false
+    }
+
+    private fun constructorPrologue(declaration: FunctionDecl, owner: MethodSet, function: Function, scope: Scope): List<HStmt> {
+        val self = function.parameters.first()
+        val statements = ArrayList<HStmt>()
+        val initializers = declaration.memberInitializers.associateBy { it.name }
+        for (name in initializers.keys) {
+            if (owner.struct.field(name) == null) diagnostics.error(initializers.getValue(name).location, "'$name' is not a member of '${owner.struct}'")
+        }
+        for (field in owner.struct.fields) {
+            val initializer = initializers[field.name]
+            val value = when {
+                initializer != null -> sema.expressions.construct(field.type, initializer.arguments, initializer.braced, scope, initializer.location)
+                field in sema.fieldDefaults || sema.expressions.needsDefaultConstruction(field.type) ->
+                    sema.expressions.defaultValue(field, declaration.location)
+
+                else -> continue
+            }
+            val target = HMember(HVariableRef(self, declaration.location), field, declaration.location)
+            statements.add(HExprStatement(HAssign(target, value, declaration.location), declaration.location))
+        }
+        return statements
+    }
+
+    fun resolveConstructor(methods: MethodSet, arguments: List<Expr>, scope: Scope, location: SourceLocation): HExpr? {
+        val analyzed = arguments.map { if (it is InitListExpr) null else sema.expressions.analyze(it, scope) }
+        val candidates = ArrayList<OverloadCandidate>()
+        for (declaration in methods.constructors) {
+            if (declaration.templateParameters != null) {
+                diagnostics.error(declaration.location, "constructor templates are not supported")
+                continue
+            }
+            val overload = methods.constructorInstances[declaration] ?: run {
+                val name = methods.struct.name
+                val defined = defineFunction(declaration, null, methods.scope, methods, AddressSpace.Thread, "$name::$name") ?: continue
+                methods.constructorInstances[declaration] = defined
+                defined
+            }
+            val cost = cost(overload, analyzed, skipThis = true) ?: continue
+            candidates.add(OverloadCandidate(overload, cost))
+        }
+        return finish(methods.struct.name, candidates, emptyList(), arguments, analyzed, scope, location, methods.struct)
     }
 
     fun resolveCall(
@@ -190,6 +242,7 @@ class CallResolver(private val sema: Sema) {
         analyzed: List<HExpr?>,
         scope: Scope,
         location: SourceLocation,
+        constructed: StructType? = null,
     ): HExpr? {
         if (candidates.isEmpty()) {
             val types = analyzed.joinToString { it?.type?.toString() ?: "initializer list" }
@@ -208,7 +261,7 @@ class CallResolver(private val sema: Sema) {
             diagnostics.error(location, "recursive call to '$name' is not allowed in Metal shaders")
             return null
         }
-        val skip = leading.size
+        val skip = leading.size + if (constructed != null) 1 else 0
         val converted = ArrayList<HExpr>(leading)
         for ((index, declared) in overload.parameterTypes.withIndex()) {
             val argument = analyzed.getOrNull(index)
@@ -230,6 +283,7 @@ class CallResolver(private val sema: Sema) {
                 },
             )
         }
+        if (constructed != null) return HConstructorCall(function, converted, constructed, location)
         return HCall(function, converted, location)
     }
 
