@@ -4,7 +4,10 @@ import gg.sona.msl.hir.AtomicOperation
 import gg.sona.msl.hir.EnumConstant
 import gg.sona.msl.hir.GlobalVariable
 import gg.sona.msl.hir.HAtomic
+import gg.sona.msl.hir.HBinary
+import gg.sona.msl.hir.HBinaryOperator
 import gg.sona.msl.hir.HConstruct
+import gg.sona.msl.hir.HConvert
 import gg.sona.msl.hir.HExpr
 import gg.sona.msl.hir.HIntrinsic
 import gg.sona.msl.hir.HLiteral
@@ -67,6 +70,17 @@ class IntrinsicLowering(private val lowering: FunctionLowering) {
     }
 
     private fun constantInteger(expression: HExpr): Int {
+        if (expression is HBinary) {
+            val left = constantInteger(expression.left)
+            val right = constantInteger(expression.right)
+            when (expression.operator) {
+                HBinaryOperator.BitwiseOr -> return left or right
+                HBinaryOperator.BitwiseAnd -> return left and right
+                HBinaryOperator.BitwiseXor -> return left xor right
+                else -> Unit
+            }
+        }
+        if (expression is HConvert) return constantInteger(expression.operand)
         val literal = expression as? HLiteral
         return when (val value = literal?.value) {
             is EnumConstant -> value.value.toInt()
