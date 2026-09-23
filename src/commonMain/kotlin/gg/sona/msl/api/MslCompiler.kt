@@ -1,5 +1,9 @@
 package gg.sona.msl.api
 
+import gg.sona.msl.dxil.DxilContainerWriter
+import gg.sona.msl.dxil.DxilEmitter
+import gg.sona.msl.dxil.DxilNativeIntrinsics
+import gg.sona.msl.dxil.DxilOptions
 import gg.sona.msl.ir.IrModule
 import gg.sona.msl.lower.Lowering
 import gg.sona.msl.lower.LoweringOptions
@@ -8,6 +12,7 @@ import gg.sona.msl.passes.DeadCodeElimination
 import gg.sona.msl.passes.IntrinsicExpansion
 import gg.sona.msl.passes.PassPipeline
 import gg.sona.msl.passes.PhiSimplification
+import gg.sona.msl.lang.ShaderStage
 import gg.sona.msl.preprocess.IncludeResolver
 import gg.sona.msl.preprocess.Preprocessor
 import gg.sona.msl.reflect.Reflector
@@ -51,6 +56,43 @@ class MslCompiler(
             return SpirvCompilation(emptyList(), exception.diagnostics)
         }
         return SpirvCompilation(if (diagnostics.hasErrors) emptyList() else shaders, diagnostics.all.toList())
+    }
+
+    fun compileDxil(
+        source: String,
+        fileName: String = "shader.metal",
+        options: DxilOptions = DxilOptions(),
+        lowering: LoweringOptions = LoweringOptions(),
+    ): DxilCompilation {
+        val sources = SourceManager()
+        val diagnostics = Diagnostics(sources)
+        val shaders = ArrayList<DxilShader>()
+        try {
+            val module = frontend(source, fileName, sources, diagnostics, lowering, "__MSL_TARGET_DXIL__")
+            if (module != null) {
+                val expansion = IntrinsicExpansion(DxilNativeIntrinsics::isNative)
+                for (function in module.functions) {
+                    expansion.run(function)
+                    PhiSimplification.run(function)
+                    DeadCodeElimination.run(function)
+                }
+                for (entry in module.entryPoints) {
+                    val emitter = DxilEmitter(module, entry, options, diagnostics)
+                    val result = emitter.emit()
+                    if (emitter.hasErrors) continue
+                    val bytes = DxilContainerWriter(emitter).write(result)
+                    val profile = when (entry.stage) {
+                        ShaderStage.Vertex -> "vs"
+                        ShaderStage.Fragment -> "ps"
+                        ShaderStage.Kernel -> "cs"
+                    }
+                    shaders.add(DxilShader(bytes, "${profile}_6_${emitter.shaderModelMinor}", Reflector.reflect(module, entry)))
+                }
+            }
+        } catch (exception: CompilationException) {
+            return DxilCompilation(emptyList(), exception.diagnostics)
+        }
+        return DxilCompilation(if (diagnostics.hasErrors) emptyList() else shaders, diagnostics.all.toList())
     }
 
     private fun frontend(

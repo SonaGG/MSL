@@ -23,13 +23,14 @@ fragment float4 texturedFragment(VertexOut in [[stage_in]],
                                  texture2d<float> albedo [[texture(0)]],
                                  texture2d<float, access::read> lookup [[texture(1)]],
                                  depth2d<float> shadow [[texture(2)]],
-                                 sampler pointSampler [[sampler(0)]])
+                                 sampler pointSampler [[sampler(0)]],
+                                 sampler shadowSampler [[sampler(1)]])
 {
     float4 color = albedo.sample(linearSampler, in.uv);
     color += albedo.sample(pointSampler, in.uv, level(1.0));
     color += albedo.sample(pointSampler, in.uv, bias(0.5), int2(1, -1));
     color *= lookup.read(uint2(in.position.xy));
-    float visibility = shadow.sample_compare(pointSampler, in.uv, 0.5);
+    float visibility = shadow.sample_compare(shadowSampler, in.uv, 0.5);
     float4 gathered = albedo.gather(linearSampler, in.uv, int2(0), component::y);
     uint width = albedo.get_width();
     uint levels = albedo.get_num_mip_levels();
