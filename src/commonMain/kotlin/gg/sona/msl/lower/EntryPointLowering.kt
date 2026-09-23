@@ -26,6 +26,7 @@ import gg.sona.msl.ir.ResourceKind
 import gg.sona.msl.ir.Sampling
 import gg.sona.msl.ir.SpecConstant
 import gg.sona.msl.ir.StorageClass
+import gg.sona.msl.ir.Undef
 import gg.sona.msl.ir.Value
 import gg.sona.msl.ir.WorkgroupSize
 import gg.sona.msl.lang.AddressSpace
@@ -244,6 +245,10 @@ class EntryPointLowering(private val lowering: Lowering, private val source: Fun
                 continue
             }
             val fieldType = lowering.types.lower(field.type)
+            if (stage == ShaderStage.Fragment && isBuiltinField(field)) {
+                values.add(Undef(fieldType))
+                continue
+            }
             if (fieldType.isBool) {
                 error(field.location, "boolean stage inputs are not supported")
                 return
