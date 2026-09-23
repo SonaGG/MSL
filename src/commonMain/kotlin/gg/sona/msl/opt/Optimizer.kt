@@ -44,6 +44,12 @@ class Optimizer(
                 if (!changed) break
             }
         }
+        diagnostics?.let { report -> module.entryPoints.forEach { InterfaceHints.report(it, report) } }
+        finish(module)
+    }
+
+    private fun finish(module: IrModule) {
+        if (level == OptimizationLevel.Aggressive) NameMangling.run(module)
     }
 
     private fun promote(function: IrFunction): Boolean {

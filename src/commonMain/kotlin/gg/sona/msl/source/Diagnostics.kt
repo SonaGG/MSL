@@ -13,6 +13,8 @@ class Diagnostics(val sources: SourceManager) {
 
     fun note(location: SourceLocation, message: String) = report(Severity.Note, location, message)
 
+    fun performanceHint(location: SourceLocation, message: String) = report(Severity.PerformanceHint, location, message)
+
     fun report(severity: Severity, location: SourceLocation, message: String) {
         all.add(Diagnostic(severity, message, location, sources.describe(location)))
     }
