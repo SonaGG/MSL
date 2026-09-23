@@ -1,6 +1,7 @@
 package gg.sona.msl.reflect
 
 import gg.sona.msl.hir.SamplerState
+import gg.sona.msl.ir.IrImage
 import gg.sona.msl.ir.ResourceKind
 
 data class ReflectedResource(
@@ -16,4 +17,5 @@ data class ReflectedResource(
     val argumentBuffer: Int = -1,
     val space: Int = 0,
     val register: Int = 0,
+    val image: IrImage? = null,
 )

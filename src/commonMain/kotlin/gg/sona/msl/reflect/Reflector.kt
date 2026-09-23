@@ -3,6 +3,7 @@ package gg.sona.msl.reflect
 import gg.sona.msl.ir.EntryPoint
 import gg.sona.msl.ir.GlobalVariable
 import gg.sona.msl.ir.IrArray
+import gg.sona.msl.ir.IrImage
 import gg.sona.msl.ir.IrModule
 import gg.sona.msl.ir.IrStruct
 import gg.sona.msl.ir.IrType
@@ -27,6 +28,7 @@ object Reflector {
                 resource.argumentBuffer,
                 resource.space,
                 resource.register,
+                (global.valueType as? IrArray)?.element as? IrImage ?: global.valueType as? IrImage,
             )
         }
         return ShaderReflection(
