@@ -10,6 +10,16 @@ repositories {
     mavenCentral()
 }
 
+val lwjgl = "3.4.3"
+val lwjglNatives = System.getProperty("os.name").lowercase().let { os ->
+    val arm = System.getProperty("os.arch").contains("aarch64")
+    when {
+        "windows" in os -> "natives-windows"
+        "mac" in os -> if (arm) "natives-macos-arm64" else "natives-macos"
+        else -> if (arm) "natives-linux-arm64" else "natives-linux"
+    }
+}
+
 kotlin {
     jvmToolchain(25)
 
@@ -33,6 +43,11 @@ kotlin {
     sourceSets {
         commonTest.dependencies {
             implementation(kotlin("test"))
+        }
+        jvmTest.dependencies {
+            implementation("org.lwjgl:lwjgl:$lwjgl")
+            implementation("org.lwjgl:lwjgl-vulkan:$lwjgl")
+            runtimeOnly("org.lwjgl:lwjgl:$lwjgl:$lwjglNatives")
         }
     }
 }
