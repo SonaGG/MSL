@@ -62,6 +62,7 @@ class Optimizer(
             changed = cleanup(function) or changed
             changed = simplifier.run(function) or changed
             if (aggressive) {
+                changed = RangeFolding(module.entryPoints.firstOrNull { it.function === function }).run(function) or changed
                 changed = Reassociation.run(function) or changed
                 changed = strengthReduction.run(function) or changed
             }
