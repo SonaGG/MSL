@@ -10,6 +10,7 @@ import gg.sona.msl.ir.StorageClass
 import gg.sona.msl.passes.DeadCodeElimination
 import gg.sona.msl.passes.Mem2Reg
 import gg.sona.msl.passes.PhiSimplification
+import gg.sona.msl.passes.RegisterPressure
 import gg.sona.msl.passes.UnreachableBlockElimination
 import gg.sona.msl.source.Diagnostics
 
@@ -49,9 +50,10 @@ class Optimizer(
         while (rounds++ < MAX_ROUNDS) {
             var changed = false
             changed = promote(function) or changed
-            if (rounds == 1 && precision == FloatPrecision.Relaxed) {
+            if (rounds == 1 && relaxes(function)) {
                 val stage = module.entryPoints.firstOrNull { it.function === function }?.stage
-                if (stage != null) changed = PrecisionDemotion(isNative).run(function, stage) or changed
+                val profit = if (precision == FloatPrecision.Auto) 0 else 2
+                if (stage != null) changed = PrecisionDemotion(isNative).run(function, stage, profit) or changed
             }
             if (aggressive) {
                 changed = scalarization.run(function) or changed
@@ -89,6 +91,12 @@ class Optimizer(
 
     private fun finish(module: IrModule) {
         if (aggressive) NameMangling.run(module)
+    }
+
+    private fun relaxes(function: IrFunction): Boolean = when (precision) {
+        FloatPrecision.Full -> false
+        FloatPrecision.Relaxed -> true
+        FloatPrecision.Auto -> RegisterPressure.peak(function) >= PRESSURE_THRESHOLD
     }
 
     private fun promote(function: IrFunction): Boolean {
@@ -140,5 +148,6 @@ class Optimizer(
         const val DEFAULT_SPECULATION = 8
         const val UNIFORM_SPECULATION = 4
         const val UNSWITCH_INSTRUCTIONS = 160
+        const val PRESSURE_THRESHOLD = 64
     }
 }

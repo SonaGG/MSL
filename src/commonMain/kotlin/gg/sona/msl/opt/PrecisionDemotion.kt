@@ -18,7 +18,7 @@ import gg.sona.msl.lang.ShaderStage
 import gg.sona.msl.passes.Uses
 
 class PrecisionDemotion(private val isNative: (Intrinsic, Instruction) -> Boolean) {
-    fun run(function: IrFunction, stage: ShaderStage): Boolean {
+    fun run(function: IrFunction, stage: ShaderStage, profit: Int = PROFIT): Boolean {
         if (stage != ShaderStage.Fragment) return false
         val uses = Uses(function)
         val demoted = LinkedHashSet<Instruction>()
@@ -37,7 +37,7 @@ class PrecisionDemotion(private val isNative: (Intrinsic, Instruction) -> Boolea
         }
         val arithmetic = demoted.count { it.opcode != Opcode.CompositeConstruct && it.opcode != Opcode.CompositeExtract }
         val boundaries = demoted.sumOf { instruction -> instruction.operands.count { it !is IrConstant && it !in demoted } }
-        if (arithmetic < MINIMUM_OPERATIONS || arithmetic < boundaries * PROFIT) return false
+        if (arithmetic < MINIMUM_OPERATIONS || arithmetic < boundaries * profit) return false
         rewrite(function, demoted, uses)
         return true
     }
