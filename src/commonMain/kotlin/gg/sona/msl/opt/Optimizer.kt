@@ -17,7 +17,10 @@ class Optimizer(
     private val level: OptimizationLevel,
     private val isNative: (Intrinsic, Instruction) -> Boolean,
     private val diagnostics: Diagnostics? = null,
+    specialization: Specialization = Specialization(),
 ) {
+    private val uniformSpecialization = UniformSpecialization(specialization)
+
     private lateinit var scalarReplacement: ScalarReplacement
     private val aggressive = level == OptimizationLevel.Aggressive
 
@@ -41,6 +44,7 @@ class Optimizer(
                     changed = LoadNarrowing.run(function) or changed
                     changed = MemoryForwarding.run(function) or changed
                 }
+                changed = uniformSpecialization.run(function) or changed
                 changed = ConditionalConstantPropagation.run(function) or changed
                 changed = cleanup(function) or changed
                 changed = simplifier.run(function) or changed
