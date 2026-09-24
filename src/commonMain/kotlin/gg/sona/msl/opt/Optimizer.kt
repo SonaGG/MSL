@@ -32,6 +32,7 @@ class Optimizer(
     private val scalarization = Scalarization(isNative)
     private val fmaFormation = FmaFormation(isNative)
     private val strengthReduction = StrengthReduction(isNative)
+    private val unswitching = LoopUnswitching(UNSWITCH_INSTRUCTIONS)
 
     fun run(module: IrModule) {
         if (level == OptimizationLevel.None) return
@@ -67,6 +68,7 @@ class Optimizer(
             changed = ValueNumbering.run(function) or changed
             changed = LoopInvariantCodeMotion.run(function) or changed
             changed = unrolling.run(function) or changed
+            if (aggressive) changed = unswitching.run(function) or changed
             changed = ifConversion.run(function) or changed
             changed = BlockMerging.run(function) or changed
             changed = cleanup(function) or changed
@@ -133,5 +135,6 @@ class Optimizer(
         const val AGGRESSIVE_SPECULATION = 24
         const val DEFAULT_SPECULATION = 8
         const val UNIFORM_SPECULATION = 4
+        const val UNSWITCH_INSTRUCTIONS = 160
     }
 }
