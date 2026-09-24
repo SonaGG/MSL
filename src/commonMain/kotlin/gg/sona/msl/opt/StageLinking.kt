@@ -115,7 +115,7 @@ object StageLinking {
     ): Boolean {
         val type = input.valueType as? IrVector ?: return false
         if (output.valueType != type || stores.any { it.operands[0] !== output }) return false
-        val lanes = sortedSetOf<Int>()
+        val lanes = HashSet<Int>()
         for (load in loads) {
             val path = path(load.operands[0]) ?: return false
             when (path.size) {
@@ -139,7 +139,7 @@ object StageLinking {
             }
         }
         if (lanes.size >= type.count) return false
-        val order = lanes.toList()
+        val order = lanes.sorted()
         val narrowed = if (order.size == 1) type.element else IrVector.of(type.element, order.size)
         val newOutput = GlobalVariable(output.name, narrowed, StorageClass.Output).also { it.interfaceInfo = output.interfaceInfo }
         val newInput = GlobalVariable(input.name, narrowed, StorageClass.Input).also { it.interfaceInfo = input.interfaceInfo }
