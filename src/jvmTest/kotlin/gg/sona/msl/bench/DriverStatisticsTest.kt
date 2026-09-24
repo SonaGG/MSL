@@ -6,6 +6,8 @@ import gg.sona.msl.ir.WorkgroupSize
 import gg.sona.msl.lang.ShaderStage
 import gg.sona.msl.lower.LoweringOptions
 import gg.sona.msl.opt.OptimizationLevel
+import gg.sona.msl.preprocess.IncludeResolver
+import gg.sona.msl.preprocess.IncludedSource
 import java.io.File
 import kotlin.test.Test
 
@@ -28,8 +30,16 @@ class DriverStatisticsTest {
         vertex PassthroughOut passthroughVertex(uint id [[vertex_id]]) { PassthroughOut o; o.position = float4(float(id), 0.0, 0.0, 1.0); return o; }
     """.trimIndent()
 
+    private val aurelium = File("../aurelia/aurelium/src/main/shaders")
+
+    private val resolver = IncludeResolver { path, _, includer ->
+        val relative = File(File(aurelium, includer).parentFile, path).takeIf { it.isFile }
+        val file = relative ?: File(aurelium, path).takeIf { it.isFile } ?: return@IncludeResolver null
+        IncludedSource(file.relativeTo(aurelium).invariantSeparatorsPath, file.readText())
+    }
+
     private fun compile(source: String, name: String, level: OptimizationLevel): List<SpirvShader>? {
-        val result = MslCompiler().compileSpirv(source, name, lowering = lowering, optimization = level)
+        val result = MslCompiler(resolver).compileSpirv(source, name, lowering = lowering, optimization = level)
         return result.shaders.takeIf { result.succeeded }
     }
 
@@ -61,28 +71,31 @@ class DriverStatisticsTest {
         harness.use {
             println("device: ${harness.deviceName}")
             val fallback = compile(passthrough, "passthrough.metal", OptimizationLevel.Aggressive)!!.single()
-            val files = File("src/jvmTest/resources/shaders").listFiles { file -> file.extension == "metal" }!!.sortedBy { it.name }
+            val corpus = File("src/jvmTest/resources/shaders").listFiles { file -> file.extension == "metal" }!!.sortedBy { it.name }
+            val engine = if (aurelium.isDirectory) aurelium.walkTopDown().filter { it.extension == "metal" && "include" !in it.path }.sortedBy { it.path }.toList() else emptyList()
+            val files = corpus + engine
             val totals = HashMap<String, Pair<Long, Long>>()
             for (file in files) {
                 val source = file.readText()
-                val baseline = compile(source, file.name, OptimizationLevel.None) ?: continue
-                val optimized = compile(source, file.name, OptimizationLevel.Aggressive) ?: continue
+                val name = if (file in engine) "aurelium/" + file.relativeTo(aurelium).invariantSeparatorsPath else file.name
+                val baseline = compile(source, name, OptimizationLevel.None) ?: continue
+                val optimized = compile(source, name, OptimizationLevel.Aggressive) ?: continue
                 val baselinePipelines = pipelines(baseline, fallback)
                 val optimizedPipelines = pipelines(optimized, fallback).toMap()
-                for ((name, stages) in baselinePipelines) {
-                    val other = optimizedPipelines[name] ?: continue
+                for ((entry, stages) in baselinePipelines) {
+                    val other = optimizedPipelines[entry] ?: continue
                     File("build/isa").mkdirs()
                     val before = runCatching { harness.statistics(stages) }
                     harness.lastRepresentation.forEach { (executable, text) ->
-                        File("build/isa/${file.nameWithoutExtension}.$name.$executable.before.txt").writeText(text)
+                        File("build/isa/${file.nameWithoutExtension}.$entry.$executable.before.txt").writeText(text)
                     }
                     val after = runCatching { harness.statistics(other) }
                     if (before.isFailure || after.isFailure) {
-                        println("%-38s failed: %s".format("${file.name}/$name", (before.exceptionOrNull() ?: after.exceptionOrNull())?.message))
+                        println("%-38s failed: %s".format("${file.name}/$entry", (before.exceptionOrNull() ?: after.exceptionOrNull())?.message))
                         continue
                     }
                     harness.lastRepresentation.forEach { (executable, text) ->
-                        File("build/isa/${file.nameWithoutExtension}.$name.$executable.after.txt").writeText(text)
+                        File("build/isa/${file.nameWithoutExtension}.$entry.$executable.after.txt").writeText(text)
                     }
                     val a = summarize(before.getOrThrow())
                     val b = summarize(after.getOrThrow())
@@ -91,7 +104,7 @@ class DriverStatisticsTest {
                         totals[key] = (totals[key]?.first ?: 0L) + pair.first to (totals[key]?.second ?: 0L) + pair.second
                         "%s %d->%d".format(LABELS.getValue(key), pair.first, pair.second)
                     }
-                    println("%-38s %s".format("${file.name}/$name", columns))
+                    println("%-38s %s".format("${file.name}/$entry", columns))
                 }
             }
             println("%-38s %s".format("total", KEYS.filter { it in totals }.joinToString("  ") { "%s %d->%d".format(LABELS.getValue(it), totals.getValue(it).first, totals.getValue(it).second) }))
