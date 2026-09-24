@@ -181,6 +181,17 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
                 isOp(ops[0], Opcode.FNeg) && isOp(ops[1], Opcode.FNeg) ->
                     at(instruction).binary(Opcode.FMul, type, (ops[0] as Instruction).operands[0], (ops[1] as Instruction).operands[0])
 
+                pairOf(ops, Intrinsic.Rsqrt) { rsqrt, other -> rsqrt.operands[0] === other } != null && native(Intrinsic.Sqrt, instruction) ->
+                    at(instruction).intrinsic(Intrinsic.Sqrt, type, listOf(pairOf(ops, Intrinsic.Rsqrt) { rsqrt, other -> rsqrt.operands[0] === other }!!))
+
+                isIntrinsic(ops[0], Intrinsic.Sqrt) && isIntrinsic(ops[1], Intrinsic.Sqrt) && (ops[0] as Instruction).operands[0] === (ops[1] as Instruction).operands[0] ->
+                    (ops[0] as Instruction).operands[0]
+
+                isIntrinsic(ops[0], Intrinsic.Rsqrt) && ops[0] === ops[1] -> at(instruction).binary(Opcode.FDiv, type, splat(type, 1.0), (ops[0] as Instruction).operands[0])
+                isIntrinsic(ops[0], Intrinsic.Exp2) && isIntrinsic(ops[1], Intrinsic.Exp2) -> at(instruction).let { builder ->
+                    builder.intrinsic(Intrinsic.Exp2, type, listOf(builder.binary(Opcode.FAdd, type, (ops[0] as Instruction).operands[0], (ops[1] as Instruction).operands[0])))
+                }
+
                 isOp(ops[0], Opcode.FNeg) && ops[0].type == type -> at(instruction).let { builder ->
                     builder.unary(Opcode.FNeg, type, builder.binary(Opcode.FMul, type, (ops[0] as Instruction).operands[0], ops[1]))
                 }
@@ -194,6 +205,10 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
 
             Opcode.FDiv -> when {
                 isValue(ops[1], 1.0) -> ops[0]
+                isIntrinsic(ops[1], Intrinsic.Sqrt) && (ops[1] as Instruction).operands[0] === ops[0] -> ops[1]
+                isValue(ops[0], 1.0) && isIntrinsic(ops[1], Intrinsic.Rsqrt) && native(Intrinsic.Sqrt, instruction) ->
+                    at(instruction).intrinsic(Intrinsic.Sqrt, type, listOf((ops[1] as Instruction).operands[0]))
+
                 isValue(ops[0], 0.0) -> zero(type)
                 ops[1] is IrConstant && ConstantFolding.isFoldable(ops[1]) && !Constants.isZero(ops[1]) -> reciprocal(ops[1] as IrConstant)?.let { at(instruction).binary(Opcode.FMul, type, ops[0], it) }
                 isIntrinsic(ops[1], Intrinsic.Sqrt) && native(Intrinsic.Rsqrt, instruction) -> {
@@ -404,6 +419,45 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
     private fun absorbs(composite: Value, operand: Value, opcode: Opcode): Boolean =
         composite is Instruction && composite.opcode == opcode && composite.operands.any { it === operand }
 
+    private fun pairOf(ops: List<Value>, intrinsic: Intrinsic, matches: (Instruction, Value) -> Boolean): Value? {
+        for (i in 0..1) {
+            val candidate = ops[i]
+            if (isIntrinsic(candidate, intrinsic) && matches(candidate as Instruction, ops[1 - i])) return ops[1 - i]
+        }
+        return null
+    }
+
+    private fun power(instruction: Instruction, base: Value, exponent: Double): Value? {
+        val type = instruction.type
+        val builder = at(instruction)
+        return when {
+            exponent == 0.0 -> splat(type, 1.0)
+            exponent == 1.0 -> base
+            exponent == 0.5 -> if (native(Intrinsic.Sqrt, instruction)) builder.intrinsic(Intrinsic.Sqrt, type, listOf(base)) else null
+            exponent == -0.5 -> if (native(Intrinsic.Rsqrt, instruction)) builder.intrinsic(Intrinsic.Rsqrt, type, listOf(base)) else null
+            exponent == 0.25 -> if (native(Intrinsic.Sqrt, instruction)) {
+                builder.intrinsic(Intrinsic.Sqrt, type, listOf(builder.intrinsic(Intrinsic.Sqrt, type, listOf(base))))
+            } else {
+                null
+            }
+
+            exponent == 1.5 -> if (native(Intrinsic.Sqrt, instruction)) builder.binary(Opcode.FMul, type, base, builder.intrinsic(Intrinsic.Sqrt, type, listOf(base))) else null
+            exponent == kotlin.math.floor(exponent) && kotlin.math.abs(exponent) <= MAX_POWER -> {
+                var remaining = kotlin.math.abs(exponent).toInt()
+                var square: Value = base
+                var result: Value? = null
+                while (remaining > 0) {
+                    if (remaining and 1 == 1) result = result?.let { builder.binary(Opcode.FMul, type, it, square) } ?: square
+                    remaining = remaining shr 1
+                    if (remaining > 0) square = builder.binary(Opcode.FMul, type, square, square)
+                }
+                if (exponent < 0) builder.binary(Opcode.FDiv, type, splat(type, 1.0), result!!) else result
+            }
+
+            else -> null
+        }
+    }
+
     private fun same(a: Value, b: Value): Boolean = a === b || a is IrConstant && a == b
 
     private fun extract(instruction: Instruction, composite: Value, path: IntArray): Value? {
@@ -538,18 +592,33 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
         val type = instruction.type
         return when (instruction.intrinsic) {
             Intrinsic.Pow, Intrinsic.Powr -> {
+                val base = scalarsOf(ops[0])?.map { it.asDouble }?.distinct()?.singleOrNull()
+                if (base == 2.0 && native(Intrinsic.Exp2, instruction)) return at(instruction).intrinsic(Intrinsic.Exp2, type, listOf(ops[1]))
                 val exponent = scalarsOf(ops[1])?.map { it.asDouble }?.distinct()?.singleOrNull() ?: return null
-                val builder = at(instruction)
-                when (exponent) {
-                    0.0 -> splat(type, 1.0)
-                    1.0 -> ops[0]
-                    2.0 -> builder.binary(Opcode.FMul, type, ops[0], ops[0])
-                    3.0 -> builder.binary(Opcode.FMul, type, builder.binary(Opcode.FMul, type, ops[0], ops[0]), ops[0])
-                    4.0 -> builder.binary(Opcode.FMul, type, ops[0], ops[0]).let { square -> builder.binary(Opcode.FMul, type, square, square) }
-                    -1.0 -> builder.binary(Opcode.FDiv, type, splat(type, 1.0), ops[0])
-                    0.5 -> if (native(Intrinsic.Sqrt, instruction)) builder.intrinsic(Intrinsic.Sqrt, type, listOf(ops[0])) else null
-                    -0.5 -> if (native(Intrinsic.Rsqrt, instruction)) builder.intrinsic(Intrinsic.Rsqrt, type, listOf(ops[0])) else null
+                power(instruction, ops[0], exponent)
+            }
+
+            Intrinsic.Exp2 -> {
+                val argument = ops[0] as? Instruction
+                when {
+                    isIntrinsic(ops[0], Intrinsic.Log2) -> argument!!.operands[0]
+                    argument != null && argument.opcode == Opcode.FMul -> {
+                        val index = argument.operands.indexOfFirst { isIntrinsic(it, Intrinsic.Log2) }
+                        val exponent = argument.operands.getOrNull(1 - index)?.let(::scalarsOf)?.map { it.asDouble }?.distinct()?.singleOrNull()
+                        if (index < 0 || exponent == null) null else power(instruction, (argument.operands[index] as Instruction).operands[0], exponent)
+                    }
+
                     else -> null
+                }
+            }
+
+            Intrinsic.Log2 -> if (isIntrinsic(ops[0], Intrinsic.Exp2)) (ops[0] as Instruction).operands[0] else null
+            Intrinsic.Sqrt -> {
+                val square = ops[0] as? Instruction
+                if (square != null && square.opcode == Opcode.FMul && square.operands[0] === square.operands[1] && native(Intrinsic.FAbs, instruction)) {
+                    at(instruction).intrinsic(Intrinsic.FAbs, type, listOf(square.operands[0]))
+                } else {
+                    null
                 }
             }
 
@@ -580,6 +649,8 @@ class Simplifier(private val isNative: (Intrinsic, Instruction) -> Boolean) {
     }
 
     private companion object {
+        const val MAX_POWER = 16.0
+
         val DISTRIBUTABLE = setOf(
             Opcode.IAdd, Opcode.ISub, Opcode.IMul, Opcode.FAdd, Opcode.FSub, Opcode.FMul, Opcode.FDiv, Opcode.FNeg, Opcode.INeg,
             Opcode.And, Opcode.Or, Opcode.Xor, Opcode.Not, Opcode.Shl, Opcode.LShr, Opcode.AShr,

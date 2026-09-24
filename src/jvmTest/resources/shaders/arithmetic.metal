@@ -51,5 +51,9 @@ fragment float4 arithmeticFragment(Varyings input [[stage_in]],
     }
     result.y += masked + cancel + float(bitwise & 15u) + settings.tint.y;
     result.z += matrixConstant.z * settings.tint.x;
+    float positive = abs(input.values.y) + 0.5;
+    float transcendental = pow(positive, 5.0) * 0.01 + exp2(log2(positive)) + rsqrt(positive) * positive + sqrt(input.values.z * input.values.z)
+        + pow(2.0, input.values.x) + pow(positive, -2.0) + pow(positive, 1.5) + exp2(input.values.x) * exp2(input.values.w);
+    result.w += transcendental * 0.1;
     return result;
 }
