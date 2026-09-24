@@ -19,61 +19,65 @@ class Optimizer(
     private val diagnostics: Diagnostics? = null,
     specialization: Specialization = Specialization(),
     private val precision: FloatPrecision = FloatPrecision.Full,
+    private val links: List<StageLink> = emptyList(),
 ) {
     private val uniformSpecialization = UniformSpecialization(specialization)
 
-    private lateinit var scalarReplacement: ScalarReplacement
     private val aggressive = level == OptimizationLevel.Aggressive
+
+    private val simplifier = Simplifier(isNative)
+    private val scalarReplacement = ScalarReplacement(if (aggressive) 32 else 8)
+    private val unrolling = if (aggressive) LoopUnrolling(64, 1024) else LoopUnrolling(8, 128)
+    private val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION, UNIFORM_SPECULATION)
+    private val scalarization = Scalarization(isNative)
+    private val fmaFormation = FmaFormation(isNative)
+    private val strengthReduction = StrengthReduction(isNative)
 
     fun run(module: IrModule) {
         if (level == OptimizationLevel.None) return
         markConstantGlobals(module)
-        val simplifier = Simplifier(isNative)
-        scalarReplacement = ScalarReplacement(if (aggressive) 32 else 8)
-        val unrolling = if (aggressive) LoopUnrolling(64, 1024) else LoopUnrolling(8, 128)
-        val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION, UNIFORM_SPECULATION)
-        val scalarization = Scalarization(isNative)
-        val fmaFormation = FmaFormation(isNative)
-        val strengthReduction = StrengthReduction(isNative)
-        for (function in module.functions) {
-            var rounds = 0
-            while (rounds++ < MAX_ROUNDS) {
-                var changed = false
-                changed = promote(function) or changed
-                if (rounds == 1 && precision == FloatPrecision.Relaxed) {
-                    val stage = module.entryPoints.firstOrNull { it.function === function }?.stage
-                    if (stage != null) changed = PrecisionDemotion(isNative).run(function, stage) or changed
-                }
-                if (aggressive) {
-                    changed = scalarization.run(function) or changed
-                    changed = LoadNarrowing.run(function) or changed
-                    changed = MemoryForwarding.run(function) or changed
-                }
-                changed = uniformSpecialization.run(function) or changed
-                changed = ConditionalConstantPropagation.run(function) or changed
-                changed = cleanup(function) or changed
-                changed = simplifier.run(function) or changed
-                if (aggressive) {
-                    changed = Reassociation.run(function) or changed
-                    changed = strengthReduction.run(function) or changed
-                }
-                changed = ValueNumbering.run(function) or changed
-                changed = LoopInvariantCodeMotion.run(function) or changed
-                changed = unrolling.run(function) or changed
-                changed = ifConversion.run(function) or changed
-                changed = BlockMerging.run(function) or changed
-                changed = cleanup(function) or changed
-                if (!changed) break
-            }
-            if (aggressive) {
-                var sinks = 0
-                while (sinks < MAX_ROUNDS && CodeSinking.run(function)) sinks++
-                if (fmaFormation.run(function)) cleanup(function)
-                Scheduling.run(function)
-            }
-        }
+        for (function in module.functions) optimize(module, function)
+        if (links.isNotEmpty()) StageLinking.run(module, links).forEach { optimize(module, it) }
         diagnostics?.let { report -> module.entryPoints.forEach { InterfaceHints.report(it, report) } }
         finish(module)
+    }
+
+    private fun optimize(module: IrModule, function: IrFunction) {
+        var rounds = 0
+        while (rounds++ < MAX_ROUNDS) {
+            var changed = false
+            changed = promote(function) or changed
+            if (rounds == 1 && precision == FloatPrecision.Relaxed) {
+                val stage = module.entryPoints.firstOrNull { it.function === function }?.stage
+                if (stage != null) changed = PrecisionDemotion(isNative).run(function, stage) or changed
+            }
+            if (aggressive) {
+                changed = scalarization.run(function) or changed
+                changed = LoadNarrowing.run(function) or changed
+                changed = MemoryForwarding.run(function) or changed
+            }
+            changed = uniformSpecialization.run(function) or changed
+            changed = ConditionalConstantPropagation.run(function) or changed
+            changed = cleanup(function) or changed
+            changed = simplifier.run(function) or changed
+            if (aggressive) {
+                changed = Reassociation.run(function) or changed
+                changed = strengthReduction.run(function) or changed
+            }
+            changed = ValueNumbering.run(function) or changed
+            changed = LoopInvariantCodeMotion.run(function) or changed
+            changed = unrolling.run(function) or changed
+            changed = ifConversion.run(function) or changed
+            changed = BlockMerging.run(function) or changed
+            changed = cleanup(function) or changed
+            if (!changed) break
+        }
+        if (aggressive) {
+            var sinks = 0
+            while (sinks < MAX_ROUNDS && CodeSinking.run(function)) sinks++
+            if (fmaFormation.run(function)) cleanup(function)
+            Scheduling.run(function)
+        }
     }
 
     private fun finish(module: IrModule) {
