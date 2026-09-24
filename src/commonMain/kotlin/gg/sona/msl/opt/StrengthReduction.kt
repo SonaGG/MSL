@@ -4,7 +4,6 @@ import gg.sona.msl.ir.ConstantScalar
 import gg.sona.msl.ir.Constants
 import gg.sona.msl.ir.Instruction
 import gg.sona.msl.ir.Intrinsic
-import gg.sona.msl.ir.IrBool
 import gg.sona.msl.ir.IrBuilder
 import gg.sona.msl.ir.IrConstant
 import gg.sona.msl.ir.IrFloat
@@ -24,7 +23,6 @@ class StrengthReduction(private val isNative: (Intrinsic, Instruction) -> Boolea
                 builder.positionBefore(instruction)
                 val replacement = when (instruction.opcode) {
                     Opcode.FDiv -> reciprocal(builder, instruction, uses)
-                    Opcode.UDiv, Opcode.URem -> unsignedDivision(builder, instruction)
                     Opcode.IMul -> multiply(builder, instruction)
                     else -> null
                 }
@@ -47,32 +45,6 @@ class StrengthReduction(private val isNative: (Intrinsic, Instruction) -> Boolea
     }
 
     private fun isOne(value: Value): Boolean = value is IrConstant && Constants.scalars(value).all { it == Constants.one(it.type.scalar) }
-
-    private fun unsignedDivision(builder: IrBuilder, instruction: Instruction): Value? {
-        val type = instruction.type as? IrInt ?: return null
-        if (type.bits != 32 || type.signed) return null
-        val divisor = (instruction.operands[1] as? ConstantScalar)?.bits?.and(0xFFFFFFFFL) ?: return null
-        if (divisor < 3 || divisor and (divisor - 1) == 0L) return null
-        val x = instruction.operands[0]
-        if (divisor > 0x80000000L) {
-            val above = builder.binary(Opcode.UGreaterEqual, IrBool, x, ConstantScalar.int(type, divisor))
-            return if (instruction.opcode == Opcode.UDiv) {
-                builder.select(above, ConstantScalar.int(type, 1), ConstantScalar.int(type, 0))
-            } else {
-                builder.select(above, builder.binary(Opcode.ISub, type, x, ConstantScalar.int(type, divisor)), x)
-            }
-        }
-        val probe = Instruction(Opcode.Intrinsic, type, listOf(instruction.operands[0], instruction.operands[0]))
-        if (!isNative(Intrinsic.UMulHi, probe)) return null
-        var shift = 0
-        while ((1L shl shift) < divisor) shift++
-        val multiplier = ((1L shl 32).toULong() * ((1L shl shift) - divisor).toULong() / divisor.toULong() + 1uL).toLong() and 0xFFFFFFFFL
-        val high = builder.intrinsic(Intrinsic.UMulHi, type, listOf(x, ConstantScalar.int(type, multiplier)))
-        val half = builder.binary(Opcode.LShr, type, builder.binary(Opcode.ISub, type, x, high), ConstantScalar.int(type, 1))
-        val quotient = builder.binary(Opcode.LShr, type, builder.binary(Opcode.IAdd, type, high, half), ConstantScalar.int(type, (shift - 1).toLong()))
-        if (instruction.opcode == Opcode.UDiv) return quotient
-        return builder.binary(Opcode.ISub, type, x, builder.binary(Opcode.IMul, type, quotient, ConstantScalar.int(type, divisor)))
-    }
 
     private fun multiply(builder: IrBuilder, instruction: Instruction): Value? {
         val type = instruction.type as? IrInt ?: return null
