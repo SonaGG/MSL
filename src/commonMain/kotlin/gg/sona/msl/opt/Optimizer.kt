@@ -18,6 +18,7 @@ class Optimizer(
     private val isNative: (Intrinsic, Instruction) -> Boolean,
     private val diagnostics: Diagnostics? = null,
     specialization: Specialization = Specialization(),
+    private val precision: FloatPrecision = FloatPrecision.Full,
 ) {
     private val uniformSpecialization = UniformSpecialization(specialization)
 
@@ -39,6 +40,10 @@ class Optimizer(
             while (rounds++ < MAX_ROUNDS) {
                 var changed = false
                 changed = promote(function) or changed
+                if (rounds == 1 && precision == FloatPrecision.Relaxed) {
+                    val stage = module.entryPoints.firstOrNull { it.function === function }?.stage
+                    if (stage != null) changed = PrecisionDemotion(isNative).run(function, stage) or changed
+                }
                 if (aggressive) {
                     changed = scalarization.run(function) or changed
                     changed = LoadNarrowing.run(function) or changed
