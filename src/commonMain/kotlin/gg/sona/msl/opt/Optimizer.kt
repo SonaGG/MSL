@@ -22,6 +22,7 @@ class Optimizer(
     private val precision: FloatPrecision = FloatPrecision.Full,
     private val links: List<StageLink> = emptyList(),
     private val vectorize: Boolean = false,
+    private val accuracy: MathAccuracy = MathAccuracy.Precise,
 ) {
     private val uniformSpecialization = UniformSpecialization(specialization)
 
@@ -50,6 +51,7 @@ class Optimizer(
         while (rounds++ < MAX_ROUNDS) {
             var changed = false
             changed = promote(function) or changed
+            if (rounds == 1 && accuracy == MathAccuracy.Approximate) changed = ApproximateMath(isNative).run(function) or changed
             if (rounds == 1 && relaxes(function)) {
                 val stage = module.entryPoints.firstOrNull { it.function === function }?.stage
                 val profit = if (precision == FloatPrecision.Auto) 0 else 2

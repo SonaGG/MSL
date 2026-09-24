@@ -8,6 +8,7 @@ import gg.sona.msl.ir.Instruction
 import gg.sona.msl.ir.Intrinsic
 import gg.sona.msl.ir.IrModule
 import gg.sona.msl.opt.FloatPrecision
+import gg.sona.msl.opt.MathAccuracy
 import gg.sona.msl.opt.OptimizationLevel
 import gg.sona.msl.opt.Optimizer
 import gg.sona.msl.opt.Specialization
@@ -45,6 +46,7 @@ class MslCompiler(
         specialization: Specialization = Specialization(),
         precision: FloatPrecision = FloatPrecision.Full,
         links: List<StageLink> = emptyList(),
+        accuracy: MathAccuracy = MathAccuracy.Precise,
     ): SpirvCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -59,7 +61,7 @@ class MslCompiler(
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
-                Optimizer(optimization, isNative, diagnostics, specialization, precision, links, vectorize = true).run(module)
+                Optimizer(optimization, isNative, diagnostics, specialization, precision, links, vectorize = true, accuracy = accuracy).run(module)
                 for (entry in module.entryPoints) {
                     val words = SpirvEmitter(module, entry, options, diagnostics).emit()
                     shaders.add(SpirvShader(words, Reflector.reflect(module, entry)))
@@ -80,6 +82,7 @@ class MslCompiler(
         specialization: Specialization = Specialization(),
         precision: FloatPrecision = FloatPrecision.Full,
         links: List<StageLink> = emptyList(),
+        accuracy: MathAccuracy = MathAccuracy.Precise,
     ): DxilCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -93,7 +96,7 @@ class MslCompiler(
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
-                Optimizer(optimization, DxilNativeIntrinsics::isNative, diagnostics, specialization, precision, links).run(module)
+                Optimizer(optimization, DxilNativeIntrinsics::isNative, diagnostics, specialization, precision, links, accuracy = accuracy).run(module)
                 for (entry in module.entryPoints) {
                     val emitter = DxilEmitter(module, entry, options, diagnostics)
                     val result = emitter.emit()
