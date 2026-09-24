@@ -87,7 +87,7 @@ class TypeResolver(private val sema: Sema) {
         if (!name.isSimple) {
             return when (val symbol = sema.lookupQualified(name, scope, location)) {
                 is TypeSymbol -> symbol.type
-                is StructTemplateSymbol -> sema.instantiateStruct(symbol, arguments ?: emptyList(), location)
+                is StructTemplateSymbol -> sema.instantiateStruct(symbol, arguments ?: emptyList(), location, scope)
                 null -> null
                 else -> {
                     sema.diagnostics.error(location, "'$name' does not name a type")
@@ -98,12 +98,18 @@ class TypeResolver(private val sema: Sema) {
         val simple = name.last
         when (val symbol = scope.lookup(simple)) {
             is TypeSymbol -> {
-                if (arguments != null) sema.diagnostics.error(location, "'$simple' is not a template")
+                if (arguments != null) {
+                    val origin = sema.templateOrigins[symbol.type] ?: run {
+                        sema.diagnostics.error(location, "'$simple' is not a template")
+                        return symbol.type
+                    }
+                    return sema.instantiateStruct(origin, arguments, location, scope)
+                }
                 return symbol.type
             }
 
             is AliasTemplateSymbol -> return sema.instantiateAlias(symbol, arguments ?: emptyList(), location)
-            is StructTemplateSymbol -> return sema.instantiateStruct(symbol, arguments ?: emptyList(), location)
+            is StructTemplateSymbol -> return sema.instantiateStruct(symbol, arguments ?: emptyList(), location, scope)
             null -> Unit
             else -> {
                 if (!isBuiltinName(simple)) {

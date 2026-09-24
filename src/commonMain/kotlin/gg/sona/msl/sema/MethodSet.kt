@@ -9,4 +9,6 @@ class MethodSet(val struct: StructType, val scope: Scope) {
     val instances = HashMap<Pair<FunctionDecl, AddressSpace>, ConcreteOverload>()
     val constructors = ArrayList<FunctionDecl>()
     val constructorInstances = HashMap<FunctionDecl, ConcreteOverload>()
+    val templates = HashMap<FunctionDecl, TemplateOverload>()
+    val staticInstances = HashMap<FunctionDecl, ConcreteOverload>()
 }

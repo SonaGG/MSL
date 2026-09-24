@@ -196,6 +196,32 @@ class CallResolver(private val sema: Sema) {
         return finish(symbol.name, candidates, emptyList(), arguments, analyzed, scope, location)
     }
 
+    fun resolveStaticCall(
+        methods: MethodSet,
+        name: String,
+        templateArguments: List<TemplateArgument>?,
+        arguments: List<Expr>,
+        scope: Scope,
+        location: SourceLocation,
+    ): HExpr? {
+        val analyzed = arguments.map { if (it is InitListExpr) null else sema.expressions.analyze(it, scope) }
+        val candidates = ArrayList<OverloadCandidate>()
+        for (declaration in methods.methods[name].orEmpty()) {
+            if (!declaration.specifiers.isStatic) continue
+            val concrete = if (declaration.templateParameters != null) {
+                val template = methods.templates.getOrPut(declaration) { TemplateOverload(declaration, methods.scope, null) }
+                instantiate(template, templateArguments, analyzed, scope, location, "${methods.struct.name}::")
+            } else {
+                if (templateArguments != null) continue
+                methods.staticInstances[declaration] ?: defineFunction(declaration, null, methods.scope, null, null, "${methods.struct.name}::$name")
+                    ?.also { methods.staticInstances[declaration] = it }
+            } ?: continue
+            val cost = cost(concrete, analyzed, skipThis = false) ?: continue
+            candidates.add(OverloadCandidate(concrete, cost))
+        }
+        return finish(name, candidates, emptyList(), arguments, analyzed, scope, location)
+    }
+
     fun resolveMethodCall(
         base: HExpr,
         methods: MethodSet,
@@ -203,6 +229,7 @@ class CallResolver(private val sema: Sema) {
         arguments: List<Expr>,
         scope: Scope,
         location: SourceLocation,
+        templateArguments: List<TemplateArgument>? = null,
     ): HExpr? {
         val declarations = methods.methods[name] ?: run {
             diagnostics.error(location, "no member named '$name' in '${methods.struct}'")
@@ -212,10 +239,15 @@ class CallResolver(private val sema: Sema) {
         val analyzed = arguments.map { if (it is InitListExpr) null else sema.expressions.analyze(it, scope) }
         val candidates = ArrayList<OverloadCandidate>()
         for (declaration in declarations) {
+            if (declaration.specifiers.isStatic) continue
             if (declaration.templateParameters != null) {
-                diagnostics.error(declaration.location, "member function templates are not supported")
+                val template = methods.templates.getOrPut(declaration) { TemplateOverload(declaration, methods.scope, methods.struct) }
+                val concrete = instantiate(template, templateArguments, analyzed, scope, location, "${methods.struct.name}::", space) ?: continue
+                val cost = cost(concrete, analyzed, skipThis = true) ?: continue
+                candidates.add(OverloadCandidate(concrete, cost))
                 continue
             }
+            if (templateArguments != null) continue
             val overload = methods.instances[declaration to space] ?: run {
                 val defined = defineFunction(
                     declaration,
@@ -319,6 +351,8 @@ class CallResolver(private val sema: Sema) {
         arguments: List<HExpr?>,
         scope: Scope,
         location: SourceLocation,
+        prefix: String = "",
+        thisSpace: AddressSpace? = null,
     ): ConcreteOverload? {
         val declaration = overload.declaration
         val parameters = declaration.templateParameters!!
@@ -350,9 +384,10 @@ class CallResolver(private val sema: Sema) {
             }
             key.add(value)
         }
+        if (thisSpace != null) key.add(thisSpace)
         overload.instances[key]?.let { return it }
-        val mangled = declaration.name + key.joinToString(prefix = "<", postfix = ">")
-        val concrete = defineFunction(declaration, null, bound, overload.owner?.let { sema.methodSets[it] }, null, mangled)
+        val mangled = prefix + declaration.name + key.joinToString(prefix = "<", postfix = ">")
+        val concrete = defineFunction(declaration, null, bound, overload.owner?.let { sema.methodSets[it] }, thisSpace, mangled)
             ?: run {
                 diagnostics.note(location, "while instantiating '$mangled'")
                 return null

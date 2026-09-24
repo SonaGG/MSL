@@ -831,11 +831,12 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         parseAttributes(attributes)
         var name: String? = null
         if (at(TokenKind.Identifier) && !atKeyword("final")) name = advance().text
+        val specialization = if (templateParameters?.isEmpty() == true && at(TokenKind.Less)) parseTemplateArguments() else null
         acceptKeyword("final")
         if (name != null) declare(name, if (templateParameters != null) NameKind.TemplateType else NameKind.Type)
         if (at(TokenKind.Colon)) fail("struct inheritance is not supported")
         if (!at(TokenKind.LBrace)) {
-            return StructDecl(name, emptyList(), attributes, templateParameters, isUnion, false, keyword.location)
+            return StructDecl(name, emptyList(), attributes, templateParameters, isUnion, false, keyword.location, specialization)
         }
         advance()
         val members = ArrayList<Decl>()
@@ -853,7 +854,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             enclosingStructName = savedStruct
         }
         expect(TokenKind.RBrace, "to close struct")
-        return StructDecl(name, members, attributes, templateParameters, isUnion, true, keyword.location)
+        return StructDecl(name, members, attributes, templateParameters, isUnion, true, keyword.location, specialization)
     }
 
     private fun parseEnumSpecifier(): EnumDecl {
@@ -1334,7 +1335,16 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                     val isArrow = advance().kind == TokenKind.Arrow
                     acceptKeyword("template")
                     val member = expectIdentifier("after member access").text
-                    MemberExpr(expression, member, isArrow, location)
+                    val templateArguments = if (at(TokenKind.Less)) {
+                        speculate {
+                            val arguments = parseTemplateArguments()
+                            if (!at(TokenKind.LParen)) fail("not a member template call")
+                            arguments
+                        }
+                    } else {
+                        null
+                    }
+                    MemberExpr(expression, member, isArrow, location, templateArguments)
                 }
 
                 TokenKind.PlusPlus -> {

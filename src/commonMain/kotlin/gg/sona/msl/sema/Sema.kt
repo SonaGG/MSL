@@ -14,6 +14,7 @@ import gg.sona.msl.ast.ParamDecl
 import gg.sona.msl.ast.QualifiedName
 import gg.sona.msl.ast.StaticAssertDecl
 import gg.sona.msl.ast.StructDecl
+import gg.sona.msl.ast.TypeTemplateArgument
 import gg.sona.msl.ast.TemplateArgument
 import gg.sona.msl.ast.TranslationUnit
 import gg.sona.msl.ast.TypeAliasDecl
@@ -48,6 +49,7 @@ class Sema(val diagnostics: Diagnostics) {
     val globals = ArrayList<GlobalVariable>()
     val structs = ArrayList<StructType>()
     val methodSets = HashMap<StructType, MethodSet>()
+    val templateOrigins = HashMap<StructType, StructTemplateSymbol>()
     val structScopes = HashMap<StructType, Scope>()
     val fieldDefaults = HashMap<StructField, FieldDefault>()
 
@@ -157,6 +159,14 @@ class Sema(val diagnostics: Diagnostics) {
     }
 
     fun declareStruct(declaration: StructDecl, scope: Scope): StructType? {
+        if (declaration.specialization != null) {
+            val template = declaration.name?.let { scope.lookup(it) } as? StructTemplateSymbol ?: run {
+                diagnostics.error(declaration.location, "explicit specialization of undeclared template '${declaration.name}'")
+                return null
+            }
+            if (declaration.isDefinition) template.specializations.add(declaration to scope)
+            return null
+        }
         if (declaration.templateParameters != null) {
             val templateName = declaration.name ?: run {
                 diagnostics.error(declaration.location, "anonymous struct templates are not supported")
@@ -293,7 +303,7 @@ class Sema(val diagnostics: Diagnostics) {
         return types.resolve(symbol.declaration.type, bound)
     }
 
-    fun instantiateStruct(symbol: StructTemplateSymbol, arguments: List<TemplateArgument>, location: SourceLocation): StructType? {
+    fun instantiateStruct(symbol: StructTemplateSymbol, arguments: List<TemplateArgument>, location: SourceLocation, argumentScope: Scope): StructType? {
         val declaration = symbol.declaration
         val parameters = declaration.templateParameters!!
         val bound = Scope(symbol.scope)
@@ -302,7 +312,7 @@ class Sema(val diagnostics: Diagnostics) {
             val argument = arguments.getOrNull(index)
             if (parameter.isType) {
                 val type = when {
-                    argument != null -> types.typeArgument(argument, symbol.scope)
+                    argument != null -> types.typeArgument(argument, argumentScope)
                     parameter.defaultType != null -> types.resolve(parameter.defaultType, bound)
                     else -> null
                 } ?: run {
@@ -312,8 +322,9 @@ class Sema(val diagnostics: Diagnostics) {
                 bound.symbols[parameter.name] = TypeSymbol(type)
                 key.add(type)
             } else {
-                val expression = (argument as? ExpressionTemplateArgument)?.expression ?: parameter.defaultValue
-                val value = expression?.let { fold(expressions.analyze(it, symbol.scope)) } ?: run {
+                val explicit = (argument as? ExpressionTemplateArgument)?.expression
+                val expression = explicit ?: parameter.defaultValue
+                val value = expression?.let { fold(expressions.analyze(it, if (explicit != null) argumentScope else bound)) } ?: run {
                     diagnostics.error(location, "missing template argument '${parameter.name}'")
                     return null
                 }
@@ -323,12 +334,23 @@ class Sema(val diagnostics: Diagnostics) {
         }
         symbol.instances[key]?.let { return it }
         val name = declaration.name + key.joinToString(prefix = "<", postfix = ">")
-        val concrete = StructDecl(name, declaration.members, declaration.attributes, null, declaration.isUnion, declaration.isDefinition, declaration.location)
-        val struct = declareStruct(concrete, bound) ?: return null
+        val specialization = symbol.specializations.firstOrNull { (candidate, candidateScope) -> specializationKey(candidate, candidateScope) == key }
+        val source = specialization?.first ?: declaration
+        val concrete = StructDecl(name, source.members, source.attributes, null, source.isUnion, source.isDefinition, source.location)
+        val struct = declareStruct(concrete, if (specialization != null) Scope(specialization.second) else bound) ?: return null
         bound.symbols[declaration.name!!] = TypeSymbol(struct)
         symbol.instances[key] = struct
+        templateOrigins[struct] = symbol
         return struct
     }
+
+    private fun specializationKey(declaration: StructDecl, scope: Scope): List<Any>? =
+        declaration.specialization!!.map { argument ->
+            when (argument) {
+                is TypeTemplateArgument -> types.typeArgument(argument, scope) ?: return null
+                is ExpressionTemplateArgument -> fold(expressions.analyze(argument.expression, scope)) ?: return null
+            }
+        }
 
     private fun declareNamespace(declaration: NamespaceDecl, scope: Scope) {
         val name = declaration.name

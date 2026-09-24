@@ -623,13 +623,14 @@ class ExpressionAnalyzer(private val sema: Sema) {
 
             is TypeSymbol -> return construct(symbol.type, arguments, false, scope, location)
             is StructTemplateSymbol -> {
-                val struct = sema.instantiateStruct(symbol, callee.templateArguments ?: emptyList(), location) ?: return errorExpression(location)
+                val struct = sema.instantiateStruct(symbol, callee.templateArguments ?: emptyList(), location, scope) ?: return errorExpression(location)
                 return construct(struct, arguments, false, scope, location)
             }
 
             null -> Unit
             else -> return error(location, "called object '$name' is not a function")
         }
+        if (!name.isSimple) staticCall(callee, name, arguments, scope, location)?.let { return it }
         val builtinName = builtinName(name) ?: return error(location, "use of undeclared identifier '$name'")
         if (BuiltinTypeNames.isTypeName(builtinName)) {
             val type = sema.types.resolveNamed(
@@ -659,6 +660,26 @@ class ExpressionAnalyzer(private val sema: Sema) {
             )
     }
 
+    private fun staticCall(callee: NameExpr, name: QualifiedName, arguments: List<Expr>, scope: Scope, location: SourceLocation): HExpr? {
+        val owner = QualifiedName(name.segments.dropLast(1), name.global)
+        val (struct, explicit) = when (val symbol = sema.lookupName(owner, scope)) {
+            is StructTemplateSymbol -> (sema.instantiateStruct(symbol, callee.templateArguments ?: emptyList(), location, scope) ?: return errorExpression(location)) to null
+            is TypeSymbol -> {
+                val type = symbol.type as? StructType ?: return null
+                val origin = sema.templateOrigins[type]
+                if (origin != null && callee.templateArguments != null) {
+                    (sema.instantiateStruct(origin, callee.templateArguments, location, scope) ?: return errorExpression(location)) to null
+                } else {
+                    type to callee.templateArguments
+                }
+            }
+            else -> return null
+        }
+        val methods = sema.methodSets[struct] ?: return null
+        if (methods.methods[name.last]?.any { it.specifiers.isStatic } != true) return null
+        return sema.calls.resolveStaticCall(methods, name.last, explicit, arguments, scope, location) ?: errorExpression(location)
+    }
+
     private fun builtinName(name: QualifiedName): String? {
         val segments = name.segments.filter { it != "metal" }
         return when {
@@ -684,7 +705,7 @@ class ExpressionAnalyzer(private val sema: Sema) {
 
             is StructType -> {
                 val methods = sema.methodSets[type] ?: return error(location, "'$type' has no member functions")
-                sema.calls.resolveMethodCall(base, methods, callee.member, arguments, scope, location)
+                sema.calls.resolveMethodCall(base, methods, callee.member, arguments, scope, location, callee.templateArguments)
                     ?: errorExpression(location)
             }
 

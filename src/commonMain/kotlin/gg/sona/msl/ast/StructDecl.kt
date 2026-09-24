@@ -10,4 +10,5 @@ class StructDecl(
     val isUnion: Boolean,
     val isDefinition: Boolean,
     override val location: SourceLocation,
+    val specialization: List<TemplateArgument>? = null,
 ) : Decl()

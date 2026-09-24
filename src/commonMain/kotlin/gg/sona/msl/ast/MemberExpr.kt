@@ -7,6 +7,7 @@ class MemberExpr(
     val member: String,
     val isArrow: Boolean,
     override val location: SourceLocation,
+    val templateArguments: List<TemplateArgument>? = null,
 ) : Expr() {
     override fun toString(): String = "$base${if (isArrow) "->" else "."}$member"
 }
