@@ -118,6 +118,57 @@ class StageLinkingTest {
         if (SpirvValidator.available) relaxed.shaders.forEach { assertNull(SpirvValidator.validate(it.toByteArray(), "vulkan1.2")) }
     }
 
+    private val lit = """
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct Varyings {
+            float4 position [[position]];
+            float3 normal;
+            float2 uv;
+        };
+
+        vertex Varyings litVertex(uint id [[vertex_id]])
+        {
+            Varyings output;
+            float angle = float(id) * 0.5;
+            output.position = float4(cos(angle), sin(angle), 0.5, 1.0);
+            output.normal = float3(sin(angle), cos(angle), 0.25);
+            output.uv = float2(float(id) * 0.1, 0.5);
+            return output;
+        }
+
+        fragment float4 litFragment(Varyings input [[stage_in]], texture2d<float> albedo [[texture(0)]], sampler linear [[sampler(0)]])
+        {
+            float light = dot(input.normal, float3(0.3, 0.8, 0.5)) * 0.5 + 0.5;
+            return albedo.sample(linear, input.uv) * light;
+        }
+    """.trimIndent()
+
+    @Test
+    fun hoistsAffineFragmentWorkIntoTheVertexStage() {
+        val links = listOf(StageLink("litVertex", "litFragment"))
+        val result = MslCompiler().compileSpirv(lit, "lit.metal", links = links, hoistVaryings = true)
+        assertTrue(result.succeeded, result.diagnostics.joinToString("\n"))
+        val inputs = result.shader("litFragment").reflection.inputs.filter { it.builtin == null }.map { it.type }.sorted()
+        val outputs = result.shader("litVertex").reflection.outputs.filter { it.builtin == null }.map { it.type }.sorted()
+        assertEquals(listOf("<2 x f32>", "f32"), inputs)
+        assertEquals(inputs, outputs)
+        if (SpirvValidator.available) result.shaders.forEach { assertNull(SpirvValidator.validate(it.toByteArray(), "vulkan1.2")) }
+        val dxil = MslCompiler().compileDxil(lit, "lit.metal", links = links, hoistVaryings = true)
+        assertTrue(dxil.succeeded, dxil.diagnostics.joinToString("\n"))
+        if (!DxilValidator.available) return
+        for (shader in dxil.shaders) {
+            val file = File.createTempFile("hoisted", ".dxil")
+            try {
+                file.writeBytes(shader.bytes)
+                assertNull(DxilValidator.validate(file))
+            } finally {
+                file.delete()
+            }
+        }
+    }
+
     private companion object {
         const val OP_DECORATE = 71
         const val DECORATION_NO_PERSPECTIVE = 13

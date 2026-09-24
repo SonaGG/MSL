@@ -17,16 +17,22 @@ import gg.sona.msl.ir.StorageClass
 import gg.sona.msl.ir.Undef
 import gg.sona.msl.ir.Value
 import gg.sona.msl.lang.ShaderStage
+import gg.sona.msl.passes.DeadCodeElimination
 import gg.sona.msl.passes.Uses
 
 object StageLinking {
-    fun run(module: IrModule, links: List<StageLink>, relaxInterpolation: Boolean = false): Set<IrFunction> {
+    fun run(module: IrModule, links: List<StageLink>, relaxInterpolation: Boolean = false, hoistVaryings: Boolean = false): Set<IrFunction> {
         val changed = HashSet<IrFunction>()
         for (link in links) {
             val vertex = module.entryPoints.firstOrNull { it.name == link.vertex && it.stage == ShaderStage.Vertex } ?: continue
             val fragment = module.entryPoints.firstOrNull { it.name == link.fragment && it.stage == ShaderStage.Fragment } ?: continue
+            val hoisted = hoistVaryings && VaryingHoisting.run(module, vertex, fragment)
+            if (hoisted) {
+                DeadCodeElimination.run(vertex.function)
+                DeadCodeElimination.run(fragment.function)
+            }
             val relaxed = relaxInterpolation && relax(vertex, fragment)
-            if (link(module, vertex, fragment) || relaxed) {
+            if (link(module, vertex, fragment) || relaxed || hoisted) {
                 changed.add(vertex.function)
                 changed.add(fragment.function)
             }
