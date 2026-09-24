@@ -70,15 +70,18 @@ class DriverStatisticsTest {
                 val optimizedPipelines = pipelines(optimized, fallback).toMap()
                 for ((name, stages) in baselinePipelines) {
                     val other = optimizedPipelines[name] ?: continue
+                    File("build/isa").mkdirs()
                     val before = runCatching { harness.statistics(stages) }
+                    harness.lastRepresentation.forEach { (executable, text) ->
+                        File("build/isa/${file.nameWithoutExtension}.$name.$executable.before.txt").writeText(text)
+                    }
                     val after = runCatching { harness.statistics(other) }
                     if (before.isFailure || after.isFailure) {
                         println("%-38s failed: %s".format("${file.name}/$name", (before.exceptionOrNull() ?: after.exceptionOrNull())?.message))
                         continue
                     }
-                    File("build/isa").mkdirs()
                     harness.lastRepresentation.forEach { (executable, text) ->
-                        File("build/isa/${file.nameWithoutExtension}.$name.$executable.txt").writeText(text)
+                        File("build/isa/${file.nameWithoutExtension}.$name.$executable.after.txt").writeText(text)
                     }
                     val a = summarize(before.getOrThrow())
                     val b = summarize(after.getOrThrow())
