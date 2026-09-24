@@ -23,10 +23,64 @@ class DxilBufferAccess(private val emitter: DxilEmitter) {
     private val modern: Boolean
         get() = emitter.shaderModelMinor >= 2
 
-    fun load(pointer: BufferPointer): List<LlvmValue> = load(pointer.resource, pointer.offset, pointer.type)
+    fun load(pointer: BufferPointer): List<LlvmValue> =
+        coalescedLoad(pointer.resource, pointer.offset, pointer.type) ?: load(pointer.resource, pointer.offset, pointer.type)
 
     fun store(pointer: BufferPointer, components: List<LlvmValue>) {
+        if (coalescedStore(pointer.resource, pointer.offset, pointer.type, components)) return
         store(pointer.resource, pointer.offset, pointer.type, components, 0)
+    }
+
+    private fun leaves(type: IrType, base: Int, into: MutableList<Pair<Int, IrScalar>>): Boolean {
+        when (type) {
+            is IrScalar -> into.add(base to type)
+            is IrVector -> for (i in 0 until type.count) into.add(base + i * byteSize(type.element) to type.element)
+            is IrMatrix -> for (c in 0 until type.columns) if (!leaves(type.column, base + c * emitter.columnStride(type), into)) return false
+            is IrArray -> {
+                if (type.isRuntime) return false
+                for (i in 0 until type.length) if (!leaves(type.element, base + i * type.stride, into)) return false
+            }
+
+            is IrStruct -> for (member in type.members) if (!leaves(member.type, base + member.offset, into)) return false
+            else -> return false
+        }
+        return into.size <= MAX_COALESCED
+    }
+
+    private fun runs(type: IrType, resource: DxilResource): List<List<Pair<Int, IrScalar>>>? {
+        if (resource.resourceClass == DxilResourceClass.CBuffer || type is IrScalar || type is IrVector) return null
+        val leaves = ArrayList<Pair<Int, IrScalar>>()
+        if (!leaves(type, 0, leaves)) return null
+        if (leaves.any { (_, scalar) -> scalar is IrBool || scalar.bits != 32 }) return null
+        val runs = ArrayList<MutableList<Pair<Int, IrScalar>>>()
+        for (leaf in leaves) {
+            val last = runs.lastOrNull()
+            if (last != null && last.size < 4 && last.last().first + 4 == leaf.first) last.add(leaf) else runs.add(mutableListOf(leaf))
+        }
+        return runs.takeIf { it.size < leaves.size }
+    }
+
+    private fun coalescedLoad(resource: DxilResource, offset: LlvmValue, type: IrType): List<LlvmValue>? {
+        val runs = runs(type, resource) ?: return null
+        return runs.flatMap { run ->
+            val words = rawLoad(resource, emitter.addConstant(offset, run[0].first), LlvmIntType.I32, run.size)
+            words.zip(run).map { (word, leaf) ->
+                val target = emitter.scalarType(leaf.second)
+                if (target == LlvmIntType.I32) word else builder.cast(LlvmBuilder.CAST_BITCAST, word, target)
+            }
+        }
+    }
+
+    private fun coalescedStore(resource: DxilResource, offset: LlvmValue, type: IrType, components: List<LlvmValue>): Boolean {
+        if (resource.resourceClass != DxilResourceClass.Uav) return false
+        val runs = runs(type, resource) ?: return false
+        var position = 0
+        for (run in runs) {
+            val words = components.subList(position, position + run.size).map { if (it.type == LlvmIntType.I32) it else builder.cast(LlvmBuilder.CAST_BITCAST, it, LlvmIntType.I32) }
+            rawStore(resource, emitter.addConstant(offset, run[0].first), LlvmIntType.I32, words)
+            position += run.size
+        }
+        return true
     }
 
     private fun load(resource: DxilResource, offset: LlvmValue, type: IrType): List<LlvmValue> = when (type) {
@@ -275,6 +329,7 @@ class DxilBufferAccess(private val emitter: DxilEmitter) {
         )
 
     companion object {
+        private const val MAX_COALESCED = 64
         const val ATOMIC_ADD = 0
         const val ATOMIC_AND = 1
         const val ATOMIC_OR = 2
