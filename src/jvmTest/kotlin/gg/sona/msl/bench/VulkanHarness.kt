@@ -256,6 +256,7 @@ class VulkanHarness private constructor(
             representations(stack, executable).forEach { (name, text) ->
                 val instructions = text.lines().map { it.trim() }.filter { INSTRUCTION.matches(it) }
                 values["$name instructions"] = instructions.size.toLong()
+                values["$name dynamic"] = IsaCost.dynamic(text) { INSTRUCTION.matches(it) }
                 values["$name alu"] = instructions.count { it.startsWith("v_") || it.startsWith("s_") && !it.startsWith("s_waitcnt") && !it.startsWith("s_wait_") && !it.startsWith("s_nop") }.toLong()
                 values["$name memory"] = instructions.count { MEMORY.any(it::startsWith) }.toLong()
                 values["$name waits"] = instructions.count { it.startsWith("s_waitcnt") || it.startsWith("s_wait_") || it.startsWith("s_nop") }.toLong()

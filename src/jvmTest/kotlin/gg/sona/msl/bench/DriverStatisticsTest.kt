@@ -99,7 +99,7 @@ class DriverStatisticsTest {
     }
 
     private companion object {
-        val KEYS = listOf("instructions", "alu", "memory", "waits", "Vgprs", "Sgprs", "scratch")
-        val LABELS = mapOf("instructions" to "instr", "alu" to "alu", "memory" to "mem", "waits" to "wait", "Vgprs" to "vgpr", "Sgprs" to "sgpr", "scratch" to "scratch")
+        val KEYS = listOf("instructions", "dynamic", "alu", "memory", "waits", "Vgprs", "Sgprs", "scratch")
+        val LABELS = mapOf("instructions" to "instr", "dynamic" to "dyn", "alu" to "alu", "memory" to "mem", "waits" to "wait", "Vgprs" to "vgpr", "Sgprs" to "sgpr", "scratch" to "scratch")
     }
 }
