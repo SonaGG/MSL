@@ -28,6 +28,7 @@ class OptimizerEquivalenceTest {
             "flow" to WorkgroupSize(32, 1, 1),
             "reduce" to WorkgroupSize(32, 1, 1),
             "blur" to WorkgroupSize(8, 8, 1),
+            "resolveBranches" to WorkgroupSize(64, 1, 1),
         ),
         threadgroupMemoryLengths = mapOf(0 to 256),
     )

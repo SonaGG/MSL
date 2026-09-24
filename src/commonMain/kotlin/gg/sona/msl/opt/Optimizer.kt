@@ -66,6 +66,7 @@ class Optimizer(
                 changed = strengthReduction.run(function) or changed
             }
             changed = ValueNumbering.run(function) or changed
+            if (aggressive) changed = BranchMerging.run(function) or changed
             changed = LoopInvariantCodeMotion.run(function) or changed
             changed = unrolling.run(function) or changed
             if (aggressive) changed = unswitching.run(function) or changed
