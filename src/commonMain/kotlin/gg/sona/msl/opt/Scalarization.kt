@@ -12,6 +12,7 @@ import gg.sona.msl.ir.IrFloat
 import gg.sona.msl.ir.IrFunction
 import gg.sona.msl.ir.IrMatrix
 import gg.sona.msl.ir.IrScalar
+import gg.sona.msl.ir.IrType
 import gg.sona.msl.ir.IrVector
 import gg.sona.msl.ir.Opcode
 import gg.sona.msl.ir.Undef
@@ -85,6 +86,7 @@ class Scalarization(private val isNative: (Intrinsic, Instruction) -> Boolean) {
     private fun scalarize(instruction: Instruction): Value? {
         val type = instruction.type
         val ops = instruction.operands
+        if (packable(type)) return null
         builder.positionBefore(instruction)
         return when (instruction.opcode) {
             in ELEMENTWISE -> when (type) {
@@ -155,6 +157,8 @@ class Scalarization(private val isNative: (Intrinsic, Instruction) -> Boolean) {
             else -> null
         }
     }
+
+    private fun packable(type: IrType): Boolean = type is IrVector && (type.element as? IrFloat)?.bits == 16
 
     private fun intrinsic(instruction: Instruction): Value? {
         val intrinsic = instruction.intrinsic!!
@@ -231,6 +235,7 @@ class Scalarization(private val isNative: (Intrinsic, Instruction) -> Boolean) {
 
     private fun phi(block: Block, instruction: Instruction): Value? {
         val type = instruction.type as? IrVector ?: return null
+        if (packable(type)) return null
         val lanes = List(type.count) { i ->
             val incoming = instruction.targets.indices.map { k ->
                 val predecessor = instruction.targets[k]
