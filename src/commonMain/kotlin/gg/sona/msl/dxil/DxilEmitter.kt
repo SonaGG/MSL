@@ -12,12 +12,13 @@ import gg.sona.msl.ir.GlobalVariable
 import gg.sona.msl.ir.ImageAccess
 import gg.sona.msl.ir.ImageDim
 import gg.sona.msl.ir.Instruction
-import gg.sona.msl.ir.Intrinsic
 import gg.sona.msl.ir.Interpolation
+import gg.sona.msl.ir.Intrinsic
 import gg.sona.msl.ir.IrArray
 import gg.sona.msl.ir.IrBool
 import gg.sona.msl.ir.IrConstant
 import gg.sona.msl.ir.IrFloat
+import gg.sona.msl.ir.IrFunction
 import gg.sona.msl.ir.IrImage
 import gg.sona.msl.ir.IrInt
 import gg.sona.msl.ir.IrMatrix
@@ -60,6 +61,7 @@ import gg.sona.msl.llvm.LlvmUndef
 import gg.sona.msl.llvm.LlvmValue
 import gg.sona.msl.llvm.LlvmVoidType
 import gg.sona.msl.passes.ControlFlowGraph
+import gg.sona.msl.passes.Uniformity
 import gg.sona.msl.reflect.RegisterLocation
 import gg.sona.msl.reflect.ResourceBindingRequest
 import gg.sona.msl.source.Diagnostics
@@ -516,7 +518,7 @@ class DxilEmitter(
 
     val constantRows = HashMap<List<Any>, LlvmValue>()
 
-    fun handle(resource: DxilResource, index: LlvmValue?): LlvmValue {
+    fun handle(resource: DxilResource, index: LlvmValue?, nonUniform: Boolean = true): LlvmValue {
         if (index == null) {
             resource.handle?.let { return it }
             val saved = builder.block
@@ -532,7 +534,7 @@ class DxilEmitter(
         } else {
             builder.binary(LlvmBuilder.BINOP_ADD, index, i32(resource.register))
         }
-        return createHandle(resource, slot, constant == null, atStart = false)
+        return createHandle(resource, slot, constant == null && nonUniform, atStart = false)
     }
 
     private fun createHandle(resource: DxilResource, slot: LlvmValue, nonUniform: Boolean, atStart: Boolean): LlvmValue {
@@ -801,12 +803,19 @@ class DxilEmitter(
         var current = pointer(instruction.operands[0])
         for (operand in instruction.operands.drop(1)) {
             val index = index32(scalar(operand))
-            current = step(current, index)
+            current = step(current, index, !uniformity(instruction).isUniform(operand))
         }
         pointers[instruction] = current
     }
 
-    fun step(pointer: DxilPointer, index: LlvmValue): DxilPointer = when (pointer) {
+    private val uniformities = HashMap<IrFunction, Uniformity>()
+
+    private fun uniformity(instruction: Instruction): Uniformity {
+        val function = instruction.block!!.function!!
+        return uniformities.getOrPut(function) { Uniformity(function) }
+    }
+
+    fun step(pointer: DxilPointer, index: LlvmValue, divergent: Boolean = true): DxilPointer = when (pointer) {
         is LocalPointer -> {
             val node = pointer.node
             val constant = (index as? LlvmConstantInt)?.value?.toInt()
@@ -852,7 +861,7 @@ class DxilEmitter(
             }
         }
 
-        is ResourcePointer -> ResourcePointer(pointer.resource, index, (pointer.type as IrArray).element)
+        is ResourcePointer -> ResourcePointer(pointer.resource, index, (pointer.type as IrArray).element, divergent && index !is LlvmConstantInt)
         is InterfacePointer -> {
             val constant = (index as? LlvmConstantInt)?.value?.toInt()
             if (constant == null) error("dynamic indexing of shader interface variables is not supported")
@@ -932,7 +941,7 @@ class DxilEmitter(
     fun load(pointer: DxilPointer): List<LlvmValue> = when (pointer) {
         is LocalPointer -> loadLocal(pointer.node, pointer.indices)
         is BufferPointer -> DxilBufferAccess(this).load(pointer)
-        is ResourcePointer -> listOf(handle(pointer.resource, pointer.index))
+        is ResourcePointer -> listOf(handle(pointer.resource, pointer.index, pointer.nonUniform))
         is InterfacePointer -> loadInterface(pointer)
     }
 

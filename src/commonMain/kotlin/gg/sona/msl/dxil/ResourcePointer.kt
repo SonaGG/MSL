@@ -7,4 +7,5 @@ class ResourcePointer(
     val resource: DxilResource,
     val index: LlvmValue?,
     override val type: IrType,
+    val nonUniform: Boolean = index != null,
 ) : DxilPointer()

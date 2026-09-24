@@ -18,6 +18,7 @@ import gg.sona.msl.ir.IrArray
 import gg.sona.msl.ir.IrBool
 import gg.sona.msl.ir.IrConstant
 import gg.sona.msl.ir.IrFloat
+import gg.sona.msl.ir.IrFunction
 import gg.sona.msl.ir.IrImage
 import gg.sona.msl.ir.IrInt
 import gg.sona.msl.ir.IrMatrix
@@ -40,6 +41,7 @@ import gg.sona.msl.ir.Undef
 import gg.sona.msl.ir.Value
 import gg.sona.msl.lang.ShaderStage
 import gg.sona.msl.passes.ControlFlowGraph
+import gg.sona.msl.passes.Uniformity
 import gg.sona.msl.reflect.ResourceBindingRequest
 import gg.sona.msl.source.Diagnostics
 import gg.sona.msl.source.SourceLocation
@@ -993,10 +995,17 @@ class SpirvEmitter(
 
     val nonUniformIds = HashSet<Int>()
 
+    private val uniformities = HashMap<IrFunction, Uniformity>()
+
+    private fun uniformity(instruction: Instruction): Uniformity {
+        val function = instruction.block!!.function!!
+        return uniformities.getOrPut(function) { Uniformity(function) }
+    }
+
     private fun hasDynamicIndex(value: Value): Boolean {
         var current = value
         while (current is Instruction && (current.opcode == Opcode.AccessChain || current.opcode == Opcode.PtrOffset)) {
-            if (current.operands.drop(1).any { it !is IrConstant }) return true
+            if (current.operands.drop(1).any { it !is IrConstant && !uniformity(current).isUniform(it) }) return true
             current = current.operands[0]
         }
         return false
