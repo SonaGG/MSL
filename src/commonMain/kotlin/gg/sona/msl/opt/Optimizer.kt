@@ -27,7 +27,7 @@ class Optimizer(
         val simplifier = Simplifier(isNative)
         scalarReplacement = ScalarReplacement(if (aggressive) 32 else 8)
         val unrolling = if (aggressive) LoopUnrolling(64, 1024) else LoopUnrolling(8, 128)
-        val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION)
+        val ifConversion = IfConversion(if (aggressive) AGGRESSIVE_SPECULATION else DEFAULT_SPECULATION, UNIFORM_SPECULATION)
         val scalarization = Scalarization(isNative)
         val fmaFormation = FmaFormation(isNative)
         val strengthReduction = StrengthReduction(isNative)
@@ -118,5 +118,6 @@ class Optimizer(
         const val MAX_ROUNDS = 16
         const val AGGRESSIVE_SPECULATION = 24
         const val DEFAULT_SPECULATION = 8
+        const val UNIFORM_SPECULATION = 4
     }
 }

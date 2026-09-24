@@ -12,19 +12,21 @@ import gg.sona.msl.ir.IrVoid
 import gg.sona.msl.ir.Opcode
 import gg.sona.msl.ir.StorageClass
 import gg.sona.msl.ir.Value
+import gg.sona.msl.passes.Uniformity
 
-class IfConversion(private val budget: Int) {
+class IfConversion(private val budget: Int, private val uniformBudget: Int) {
     fun run(function: IrFunction): Boolean {
         var changed = false
         while (true) {
             val blocks = StructuredBlocks(function)
-            val header = function.blocks.firstOrNull { convertible(it, blocks) } ?: return changed
+            val uniformity = Uniformity(function)
+            val header = function.blocks.firstOrNull { convertible(it, blocks, uniformity) } ?: return changed
             convert(function, header)
             changed = true
         }
     }
 
-    private fun arm(header: Block, target: Block, merge: Block, blocks: StructuredBlocks): Boolean {
+    private fun arm(header: Block, target: Block, merge: Block, blocks: StructuredBlocks, limit: Int): Boolean {
         if (target === merge) return true
         if (target.construct != ConstructKind.None || target in blocks.structural) return false
         if (blocks.predecessorsOf(target) != listOf(header)) return false
@@ -37,7 +39,7 @@ class IfConversion(private val budget: Int) {
             if (!speculatable(instruction)) return false
             cost += Purity.cost(instruction)
         }
-        return cost <= budget
+        return cost <= limit
     }
 
     private fun speculatable(instruction: Instruction): Boolean {
@@ -54,7 +56,7 @@ class IfConversion(private val budget: Int) {
         return true
     }
 
-    private fun convertible(header: Block, blocks: StructuredBlocks): Boolean {
+    private fun convertible(header: Block, blocks: StructuredBlocks, uniformity: Uniformity): Boolean {
         if (header.construct != ConstructKind.Selection) return false
         val terminator = header.terminator ?: return false
         if (terminator.opcode != Opcode.CondBranch || terminator.operands[0].type != IrBool) return false
@@ -62,7 +64,8 @@ class IfConversion(private val budget: Int) {
         val whenTrue = terminator.targets[0]
         val whenFalse = terminator.targets[1]
         if (whenTrue === whenFalse) return false
-        if (!arm(header, whenTrue, merge, blocks) || !arm(header, whenFalse, merge, blocks)) return false
+        val limit = if (uniformity.isUniform(terminator.operands[0])) uniformBudget else budget
+        if (!arm(header, whenTrue, merge, blocks, limit) || !arm(header, whenFalse, merge, blocks, limit)) return false
         val expected = setOf(if (whenTrue === merge) header else whenTrue, if (whenFalse === merge) header else whenFalse)
         if (blocks.predecessorsOf(merge).toSet() != expected) return false
         return merge.phis.all { phi -> phi.type !is IrStruct && phi.type !is IrArray && phi.type !is IrMatrix && phi.type != IrVoid && phi.operands.size == 2 }
