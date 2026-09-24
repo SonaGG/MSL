@@ -76,6 +76,7 @@ class Optimizer(
             var sinks = 0
             while (sinks < MAX_ROUNDS && CodeSinking.run(function)) sinks++
             if (fmaFormation.run(function)) cleanup(function)
+            ExplicitLevelSampling.run(function)
             Scheduling.run(function)
         }
     }
