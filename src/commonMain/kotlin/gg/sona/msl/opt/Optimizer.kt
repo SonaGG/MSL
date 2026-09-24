@@ -23,6 +23,7 @@ class Optimizer(
     private val links: List<StageLink> = emptyList(),
     private val vectorize: Boolean = false,
     private val accuracy: MathAccuracy = MathAccuracy.Precise,
+    private val relaxInterpolation: Boolean = false,
 ) {
     private val uniformSpecialization = UniformSpecialization(specialization)
 
@@ -41,7 +42,7 @@ class Optimizer(
         if (level == OptimizationLevel.None) return
         markConstantGlobals(module)
         for (function in module.functions) optimize(module, function)
-        if (links.isNotEmpty()) StageLinking.run(module, links).forEach { optimize(module, it) }
+        if (links.isNotEmpty()) StageLinking.run(module, links, relaxInterpolation).forEach { optimize(module, it) }
         diagnostics?.let { report -> module.entryPoints.forEach { InterfaceHints.report(it, report) } }
         finish(module)
     }

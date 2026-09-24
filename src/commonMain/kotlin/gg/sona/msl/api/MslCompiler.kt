@@ -47,6 +47,7 @@ class MslCompiler(
         precision: FloatPrecision = FloatPrecision.Full,
         links: List<StageLink> = emptyList(),
         accuracy: MathAccuracy = MathAccuracy.Precise,
+        relaxInterpolation: Boolean = false,
     ): SpirvCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -61,7 +62,7 @@ class MslCompiler(
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
-                Optimizer(optimization, isNative, diagnostics, specialization, precision, links, vectorize = true, accuracy = accuracy).run(module)
+                Optimizer(optimization, isNative, diagnostics, specialization, precision, links, vectorize = true, accuracy = accuracy, relaxInterpolation = relaxInterpolation).run(module)
                 for (entry in module.entryPoints) {
                     val words = SpirvEmitter(module, entry, options, diagnostics).emit()
                     shaders.add(SpirvShader(words, Reflector.reflect(module, entry)))
@@ -83,6 +84,7 @@ class MslCompiler(
         precision: FloatPrecision = FloatPrecision.Full,
         links: List<StageLink> = emptyList(),
         accuracy: MathAccuracy = MathAccuracy.Precise,
+        relaxInterpolation: Boolean = false,
     ): DxilCompilation {
         val sources = SourceManager()
         val diagnostics = Diagnostics(sources)
@@ -96,7 +98,7 @@ class MslCompiler(
                     PhiSimplification.run(function)
                     DeadCodeElimination.run(function)
                 }
-                Optimizer(optimization, DxilNativeIntrinsics::isNative, diagnostics, specialization, precision, links, accuracy = accuracy).run(module)
+                Optimizer(optimization, DxilNativeIntrinsics::isNative, diagnostics, specialization, precision, links, accuracy = accuracy, relaxInterpolation = relaxInterpolation).run(module)
                 for (entry in module.entryPoints) {
                     val emitter = DxilEmitter(module, entry, options, diagnostics)
                     val result = emitter.emit()

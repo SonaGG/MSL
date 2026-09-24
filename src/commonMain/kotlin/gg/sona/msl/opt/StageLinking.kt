@@ -4,6 +4,9 @@ import gg.sona.msl.ir.ConstantScalar
 import gg.sona.msl.ir.EntryPoint
 import gg.sona.msl.ir.GlobalVariable
 import gg.sona.msl.ir.Instruction
+import gg.sona.msl.ir.InterfaceInfo
+import gg.sona.msl.ir.Interpolation
+import gg.sona.msl.ir.Intrinsic
 import gg.sona.msl.ir.IrBuilder
 import gg.sona.msl.ir.IrConstant
 import gg.sona.msl.ir.IrFunction
@@ -17,12 +20,13 @@ import gg.sona.msl.lang.ShaderStage
 import gg.sona.msl.passes.Uses
 
 object StageLinking {
-    fun run(module: IrModule, links: List<StageLink>): Set<IrFunction> {
+    fun run(module: IrModule, links: List<StageLink>, relaxInterpolation: Boolean = false): Set<IrFunction> {
         val changed = HashSet<IrFunction>()
         for (link in links) {
             val vertex = module.entryPoints.firstOrNull { it.name == link.vertex && it.stage == ShaderStage.Vertex } ?: continue
             val fragment = module.entryPoints.firstOrNull { it.name == link.fragment && it.stage == ShaderStage.Fragment } ?: continue
-            if (link(module, vertex, fragment)) {
+            val relaxed = relaxInterpolation && relax(vertex, fragment)
+            if (link(module, vertex, fragment) || relaxed) {
                 changed.add(vertex.function)
                 changed.add(fragment.function)
             }
@@ -74,6 +78,51 @@ object StageLinking {
         }
         return changed
     }
+
+    private fun relax(vertex: EntryPoint, fragment: EntryPoint): Boolean {
+        val outputs = varyings(vertex, StorageClass.Output)
+        val uses = Uses(fragment.function)
+        var changed = false
+        for ((location, input) in varyings(fragment, StorageClass.Input)) {
+            val info = input.interfaceInfo!!
+            val output = outputs[location] ?: continue
+            if (info.interpolation != Interpolation.Perspective || output.interfaceInfo!!.interpolation != Interpolation.Perspective) continue
+            if (!loads(input, uses).all { colorOnly(it, uses, HashSet()) }) continue
+            input.interfaceInfo = linear(info)
+            output.interfaceInfo = linear(output.interfaceInfo!!)
+            changed = true
+        }
+        return changed
+    }
+
+    private fun linear(info: InterfaceInfo) = InterfaceInfo(
+        info.isInput, info.location, info.builtin, Interpolation.NoPerspective, info.sampling, info.index, info.name, info.invariant,
+    )
+
+    private fun colorOnly(value: Instruction, uses: Uses, seen: MutableSet<Instruction>): Boolean {
+        if (!seen.add(value)) return true
+        return uses.of(value).all { user ->
+            when (user.opcode) {
+                Opcode.Store -> user.operands[1] === value && (user.operands[0] as? GlobalVariable)?.let {
+                    it.storage == StorageClass.Output && it.interfaceInfo?.builtin == null
+                } == true
+
+                in COLOR_MATH -> colorOnly(user, uses, seen)
+                Opcode.Intrinsic -> user.intrinsic in COLOR_INTRINSICS && colorOnly(user, uses, seen)
+                else -> false
+            }
+        }
+    }
+
+    private val COLOR_MATH = setOf(
+        Opcode.FAdd, Opcode.FSub, Opcode.FMul, Opcode.FDiv, Opcode.FNeg, Opcode.Select, Opcode.CompositeConstruct,
+        Opcode.CompositeExtract, Opcode.VectorShuffle, Opcode.VectorTimesScalar, Opcode.FConvert, Opcode.Phi,
+    )
+
+    private val COLOR_INTRINSICS = setOf(
+        Intrinsic.Fma, Intrinsic.FMin, Intrinsic.FMax, Intrinsic.FClamp, Intrinsic.Saturate, Intrinsic.Mix, Intrinsic.FAbs,
+        Intrinsic.Dot, Intrinsic.Normalize, Intrinsic.Length, Intrinsic.Sqrt, Intrinsic.Rsqrt, Intrinsic.Pow, Intrinsic.Exp2, Intrinsic.Log2,
+    )
 
     private fun path(pointer: Value): List<Int>? {
         if (pointer is GlobalVariable) return emptyList()
