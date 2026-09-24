@@ -20,6 +20,7 @@ class Optimizer(
     specialization: Specialization = Specialization(),
     private val precision: FloatPrecision = FloatPrecision.Full,
     private val links: List<StageLink> = emptyList(),
+    private val vectorize: Boolean = false,
 ) {
     private val uniformSpecialization = UniformSpecialization(specialization)
 
@@ -81,6 +82,7 @@ class Optimizer(
             while (sinks < MAX_ROUNDS && CodeSinking.run(function)) sinks++
             if (fmaFormation.run(function)) cleanup(function)
             ExplicitLevelSampling.run(function)
+            if (vectorize && Revectorization.run(function)) cleanup(function)
             Scheduling.run(function)
         }
     }
