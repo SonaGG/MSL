@@ -80,6 +80,7 @@ class Optimizer(
             if (aggressive) changed = unswitching.run(function) or changed
             changed = ifConversion.run(function) or changed
             changed = BlockMerging.run(function) or changed
+            changed = CfgSimplification.run(function) or changed
             changed = cleanup(function) or changed
             if (!changed) break
         }
