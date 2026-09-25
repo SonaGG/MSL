@@ -14,10 +14,12 @@ import gg.sona.msl.hir.HLiteral
 import gg.sona.msl.hir.HTextureOperation
 import gg.sona.msl.hir.HVariableRef
 import gg.sona.msl.hir.ScalarConstant
+import gg.sona.msl.hir.TextureAtomicOperation
 import gg.sona.msl.hir.TextureOperation
 import gg.sona.msl.ir.ConstantScalar
 import gg.sona.msl.ir.Constants
 import gg.sona.msl.ir.Intrinsic
+import gg.sona.msl.ir.Instruction
 import gg.sona.msl.ir.IrBool
 import gg.sona.msl.ir.IrFloat
 import gg.sona.msl.ir.IrInt
@@ -205,6 +207,7 @@ class IntrinsicLowering(private val lowering: FunctionLowering) {
             operands.add(lowering.rvalue(it))
             mask += TextureOperands.ArrayIndex
         }
+        if (expression.operation == TextureOperation.Atomic) return textureAtomic(expression, operands, mask, resultType)
         val option = expression.option
         if (option != null) {
             val values = (option as? HConstruct)?.arguments?.map { lowering.rvalue(it) } ?: run {
@@ -282,10 +285,36 @@ class IntrinsicLowering(private val lowering: FunctionLowering) {
                 Intrinsic.TextureCalculateLod
             }
 
-            TextureOperation.Fence -> return null
+            TextureOperation.Fence, TextureOperation.Atomic -> return null
         }
         val instruction = builder.intrinsic(intrinsic, resultType, operands, intArrayOf(mask.bits, extra))
         return if (resultType == IrVoid) null else instruction
+    }
+
+    private fun textureAtomic(expression: HTextureOperation, operands: ArrayList<Value>, mask: TextureOperands, resultType: IrType): Value? {
+        val operation = TextureAtomicOperation.entries[expression.component]
+        val texel = (expression.texture.type as gg.sona.msl.types.TextureType).texelType
+        val element = lowering.lowerType(texel).scalar
+        fun first(value: Value): Value = builder.extract(value, 0)
+        fun emit(values: List<Value>): Instruction =
+            builder.intrinsic(Intrinsic.TextureAtomic, element, operands + values, intArrayOf(mask.bits, operation.ordinal))
+        return when (operation) {
+            TextureAtomicOperation.Load -> builder.splat(resultType, emit(emptyList()))
+            TextureAtomicOperation.Store -> {
+                emit(listOf(first(lowering.rvalue(expression.value!!))))
+                null
+            }
+
+            TextureAtomicOperation.CompareExchange -> {
+                val expectedPointer = lowering.rvalue(expression.compareValue!!)
+                val expected = first(builder.load(expectedPointer))
+                val original = emit(listOf(first(lowering.rvalue(expression.value!!)), expected))
+                builder.store(expectedPointer, builder.splat(lowering.lowerType(texel), original))
+                builder.binary(Opcode.IEqual, IrBool, original, expected)
+            }
+
+            else -> builder.splat(resultType, emit(listOf(first(lowering.rvalue(expression.value!!)))))
+        }
     }
 
     private fun isMultisampled(expression: HTextureOperation): Boolean =

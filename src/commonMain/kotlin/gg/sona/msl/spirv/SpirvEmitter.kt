@@ -372,7 +372,11 @@ class SpirvEmitter(
             if (type.arrayed) 1 else 0,
             if (type.multisampled) 1 else 0,
             if (storage) 2 else 1,
-            Spv.ImageFormatUnknown,
+            when {
+                !type.atomic -> Spv.ImageFormatUnknown
+                type.sampled == SampledKind.SInt -> Spv.ImageFormatR32i
+                else -> Spv.ImageFormatR32ui
+            },
         )
     }
 
@@ -408,6 +412,7 @@ class SpirvEmitter(
         StorageClass.Output -> Spv.StorageClassOutput
         StorageClass.UniformConstant -> Spv.StorageClassUniformConstant
         StorageClass.PushConstant -> Spv.StorageClassPushConstant
+        StorageClass.Image -> Spv.StorageClassImage
     }
 
     fun constant(constant: IrConstant, layout: SpirvLayout = SpirvLayout.Logical): Int {

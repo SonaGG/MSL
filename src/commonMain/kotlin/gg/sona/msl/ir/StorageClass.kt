@@ -10,6 +10,7 @@ enum class StorageClass {
     Output,
     UniformConstant,
     PushConstant,
+    Image,
     ;
 
     val isExplicitlyLaidOut: Boolean

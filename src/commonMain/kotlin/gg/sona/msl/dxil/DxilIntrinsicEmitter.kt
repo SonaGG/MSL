@@ -1,5 +1,6 @@
 package gg.sona.msl.dxil
 
+import gg.sona.msl.hir.TextureAtomicOperation
 import gg.sona.msl.ir.ImageDim
 import gg.sona.msl.ir.Instruction
 import gg.sona.msl.ir.Intrinsic
@@ -137,6 +138,8 @@ class DxilIntrinsicEmitter(private val emitter: DxilEmitter) {
                 write(instruction)
                 null
             }
+
+            Intrinsic.TextureAtomic -> textureAtomic(instruction)
 
             Intrinsic.TextureSize, Intrinsic.TextureLevels, Intrinsic.TextureSamples -> query(instruction)
             Intrinsic.TextureCalculateLod -> {
@@ -512,6 +515,62 @@ class DxilIntrinsicEmitter(private val emitter: DxilEmitter) {
         }
         val coordinate = ints(coordinates(image, emitter.components(coordinateValue), arrayIndex, true), 3)
         emitter.callOp("textureStore", DxilOpcode.TextureStore, type, LlvmVoidType, listOf(handle) + coordinate + values + emitter.i8(15), DxilEmitter.NO_UNWIND)
+    }
+
+    private fun textureAtomic(instruction: Instruction): List<LlvmValue>? {
+        val image = instruction.operands[0].type as IrImage
+        val arguments = TextureOperandsCursor(instruction)
+        val handle = emitter.scalar(instruction.operands[0])
+        val coordinateValue = arguments.next()
+        val arrayIndex = arguments.take(TextureOperands.ArrayIndex)?.let { emitter.index32(emitter.scalar(it)) }
+        val coordinate = ints(coordinates(image, emitter.components(coordinateValue), arrayIndex, true), 3)
+        val signed = image.sampled == gg.sona.msl.ir.SampledKind.SInt
+        val operation = TextureAtomicOperation.entries[instruction.literals[1]]
+        fun binary(code: Int, value: LlvmValue): LlvmValue = emitter.callOp(
+            "atomicBinOp",
+            DxilOpcode.AtomicBinOp,
+            LlvmIntType.I32,
+            LlvmIntType.I32,
+            listOf(handle, emitter.i32(code)) + coordinate + value,
+            DxilEmitter.NO_UNWIND,
+        )
+        fun value(): LlvmValue = emitter.scalar(arguments.next())
+        return when (operation) {
+            TextureAtomicOperation.Load -> listOf(binary(DxilBufferAccess.ATOMIC_OR, emitter.i32(0)))
+            TextureAtomicOperation.Store -> {
+                binary(DxilBufferAccess.ATOMIC_EXCHANGE, value())
+                null
+            }
+
+            TextureAtomicOperation.CompareExchange -> {
+                val desired = value()
+                val comparand = value()
+                listOf(
+                    emitter.callOp(
+                        "atomicCompareExchange",
+                        DxilOpcode.AtomicCompareExchange,
+                        LlvmIntType.I32,
+                        LlvmIntType.I32,
+                        listOf(handle) + coordinate + comparand + desired,
+                        DxilEmitter.NO_UNWIND,
+                    ),
+                )
+            }
+
+            TextureAtomicOperation.Sub -> listOf(binary(DxilBufferAccess.ATOMIC_ADD, builder.binary(LlvmBuilder.BINOP_SUB, emitter.i32(0), value())))
+            else -> {
+                val code = when (operation) {
+                    TextureAtomicOperation.Exchange -> DxilBufferAccess.ATOMIC_EXCHANGE
+                    TextureAtomicOperation.Add -> DxilBufferAccess.ATOMIC_ADD
+                    TextureAtomicOperation.And -> DxilBufferAccess.ATOMIC_AND
+                    TextureAtomicOperation.Or -> DxilBufferAccess.ATOMIC_OR
+                    TextureAtomicOperation.Xor -> DxilBufferAccess.ATOMIC_XOR
+                    TextureAtomicOperation.Min -> if (signed) DxilBufferAccess.ATOMIC_IMIN else DxilBufferAccess.ATOMIC_UMIN
+                    else -> if (signed) DxilBufferAccess.ATOMIC_IMAX else DxilBufferAccess.ATOMIC_UMAX
+                }
+                listOf(binary(code, value()))
+            }
+        }
     }
 
     private fun query(instruction: Instruction): List<LlvmValue> {

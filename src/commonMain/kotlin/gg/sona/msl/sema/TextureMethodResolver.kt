@@ -5,7 +5,10 @@ import gg.sona.msl.hir.HExpr
 import gg.sona.msl.hir.HLiteral
 import gg.sona.msl.hir.HTextureOperation
 import gg.sona.msl.hir.ScalarConstant
+import gg.sona.msl.hir.TextureAtomicOperation
 import gg.sona.msl.hir.TextureOperation
+import gg.sona.msl.lang.AddressSpace
+import gg.sona.msl.types.PointerType
 import gg.sona.msl.source.Diagnostics
 import gg.sona.msl.source.SourceLocation
 import gg.sona.msl.types.SampleOptionKind
@@ -38,6 +41,7 @@ class TextureMethodResolver(private val diagnostics: Diagnostics) {
             "calculate_clamped_lod" -> lod(type, texture, cursor, location, TextureOperation.CalculateClampedLod)
             "calculate_unclamped_lod" -> lod(type, texture, cursor, location, TextureOperation.CalculateUnclampedLod)
             "fence" -> operation(TextureOperation.Fence, texture, VoidType, location)
+            in ATOMICS -> atomic(type, texture, cursor, location, ATOMICS.getValue(method))
             else -> {
                 diagnostics.error(location, "no member named '$method' in '$type'")
                 return null
@@ -276,6 +280,48 @@ class TextureMethodResolver(private val diagnostics: Diagnostics) {
         )
     }
 
+    private fun atomic(type: TextureType, texture: HExpr, cursor: ArgumentCursor, location: SourceLocation, atomic: TextureAtomicOperation): HExpr? {
+        val kind = type.kind
+        if (type.access != gg.sona.msl.types.TextureAccess.ReadWrite || !type.sampleType.kind.isInteger || type.sampleType.kind.bits != 32) {
+            diagnostics.error(location, "atomic operations require a read_write texture of int or uint, not '$type'")
+            return null
+        }
+        if (kind.isCube || kind.isDepth || kind.isMultisampled || kind.isBuffer || kind == TextureKind.Texture1DArray) {
+            diagnostics.error(location, "atomic operations are not supported on '$type'")
+            return null
+        }
+        val coordinate = expect(cursor.next(), uintVector(readCoordinateSize(kind)), "coordinate", location) ?: return null
+        val arrayIndex = if (kind.isArray) expect(cursor.next(), ScalarType.UInt, "array index", location) ?: return null else null
+        val expected = if (atomic == TextureAtomicOperation.CompareExchange) {
+            val pointer = cursor.next()
+            val pointerType = pointer?.let { ConversionRules.valueType(it.type) } as? PointerType
+            if (pointer == null || pointerType == null || pointerType.addressSpace != AddressSpace.Thread || pointerType.pointee != type.texelType) {
+                diagnostics.error(pointer?.location ?: location, "expected a 'thread ${type.texelType}*' argument")
+                return null
+            }
+            pointer
+        } else {
+            null
+        }
+        val value = if (atomic == TextureAtomicOperation.Load) null else expect(cursor.next(), type.texelType, "value", location) ?: return null
+        val result = when (atomic) {
+            TextureAtomicOperation.Store -> VoidType
+            TextureAtomicOperation.CompareExchange -> ScalarType.Bool
+            else -> type.texelType
+        }
+        return operation(
+            TextureOperation.Atomic,
+            texture,
+            result,
+            location,
+            coordinate = coordinate,
+            arrayIndex = arrayIndex,
+            compareValue = expected,
+            value = value,
+            component = atomic.ordinal,
+        )
+    }
+
     private fun size(
         type: TextureType,
         texture: HExpr,
@@ -334,5 +380,21 @@ class TextureMethodResolver(private val diagnostics: Diagnostics) {
         val sampler = expectSampler(cursor, location) ?: return null
         val coordinate = expect(cursor.next(), floatVector(kind.coordinateCount), "coordinate", location) ?: return null
         return operation(operation, texture, ScalarType.Float, location, sampler = sampler, coordinate = coordinate)
+    }
+
+    private companion object {
+        val ATOMICS: Map<String, TextureAtomicOperation> = mapOf(
+            "atomic_load" to TextureAtomicOperation.Load,
+            "atomic_store" to TextureAtomicOperation.Store,
+            "atomic_exchange" to TextureAtomicOperation.Exchange,
+            "atomic_compare_exchange_weak" to TextureAtomicOperation.CompareExchange,
+            "atomic_fetch_add" to TextureAtomicOperation.Add,
+            "atomic_fetch_sub" to TextureAtomicOperation.Sub,
+            "atomic_fetch_and" to TextureAtomicOperation.And,
+            "atomic_fetch_or" to TextureAtomicOperation.Or,
+            "atomic_fetch_xor" to TextureAtomicOperation.Xor,
+            "atomic_fetch_min" to TextureAtomicOperation.Min,
+            "atomic_fetch_max" to TextureAtomicOperation.Max,
+        )
     }
 }

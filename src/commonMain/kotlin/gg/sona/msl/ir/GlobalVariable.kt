@@ -2,10 +2,11 @@ package gg.sona.msl.ir
 
 class GlobalVariable(
     var name: String,
-    val valueType: IrType,
+    var valueType: IrType,
     val storage: StorageClass,
 ) : Value() {
-    override val type: IrType = IrPointer(valueType, storage)
+    override val type: IrType
+        get() = IrPointer(valueType, storage)
     var initializer: IrConstant? = null
     var resource: ResourceInfo? = null
     var interfaceInfo: InterfaceInfo? = null

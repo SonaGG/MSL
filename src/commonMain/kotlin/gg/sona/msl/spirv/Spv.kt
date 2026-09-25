@@ -280,6 +280,10 @@ object Spv {
     const val DimBuffer = 5
 
     const val ImageFormatUnknown = 0
+    const val ImageFormatR32i = 24
+    const val ImageFormatR32ui = 33
+    const val StorageClassImage = 11
+    const val OpImageTexelPointer = 60
 
     const val DecorationSpecId = 1
     const val DecorationBlock = 2

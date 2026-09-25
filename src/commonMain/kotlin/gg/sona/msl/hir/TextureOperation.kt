@@ -16,4 +16,5 @@ enum class TextureOperation {
     CalculateClampedLod,
     CalculateUnclampedLod,
     Fence,
+    Atomic,
 }

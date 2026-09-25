@@ -14,6 +14,7 @@ object PassPipeline {
             DeadCodeElimination.run(function)
             UnreachableBlockElimination.pruneIncoming(function)
         }
+        AtomicImages.run(module)
         DeadCodeElimination.removeUnusedGlobals(module)
     }
 }

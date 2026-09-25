@@ -7,6 +7,7 @@ class IrImage(
     val multisampled: Boolean,
     val depth: Boolean,
     val access: ImageAccess,
+    val atomic: Boolean = false,
 ) : IrType() {
     val texelScalar: IrScalar
         get() = when (sampled) {
@@ -25,17 +26,21 @@ class IrImage(
             ImageDim.Dim3D, ImageDim.Cube -> 3
         }
 
+    fun withAtomic(): IrImage = IrImage(dim, sampled, arrayed, multisampled, depth, access, true)
+
     override fun equals(other: Any?): Boolean =
         other is IrImage && other.dim == dim && other.sampled == sampled && other.arrayed == arrayed &&
-            other.multisampled == multisampled && other.depth == depth && other.access == access
+            other.multisampled == multisampled && other.depth == depth && other.access == access && other.atomic == atomic
 
-    override fun hashCode(): Int = listOf(dim, sampled, arrayed, multisampled, depth, access).hashCode()
+    override fun hashCode(): Int = listOf(dim, sampled, arrayed, multisampled, depth, access, atomic).hashCode()
 
     override fun toString(): String = buildString {
         append("image<").append(dim.name.removePrefix("Dim")).append(", ").append(sampled.name.lowercase())
         if (arrayed) append(", array")
         if (multisampled) append(", ms")
         if (depth) append(", depth")
-        append(", ").append(access.name.lowercase()).append('>')
+        append(", ").append(access.name.lowercase())
+        if (atomic) append(", atomic")
+        append('>')
     }
 }

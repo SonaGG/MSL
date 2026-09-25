@@ -20,6 +20,7 @@ class DxilCorpusTest {
             "blur" to WorkgroupSize(8, 8, 1),
             "resolveBranches" to WorkgroupSize(64, 1, 1),
             "torture" to WorkgroupSize(64, 1, 1),
+            "voxelize" to WorkgroupSize(4, 4, 4),
         ),
         threadgroupMemoryLengths = mapOf(0 to 256),
     )

@@ -142,6 +142,7 @@ enum class Intrinsic(val isPure: Boolean = true) {
     TextureLevels,
     TextureSamples,
     TextureCalculateLod(isPure = false),
+    TextureAtomic(isPure = false),
     AtomicLoad(isPure = false),
     AtomicStore(isPure = false),
     AtomicExchange(isPure = false),

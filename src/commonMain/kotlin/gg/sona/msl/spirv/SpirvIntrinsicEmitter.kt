@@ -1,5 +1,8 @@
 package gg.sona.msl.spirv
 
+import gg.sona.msl.ir.StorageClass
+import gg.sona.msl.ir.Opcode
+import gg.sona.msl.hir.TextureAtomicOperation
 import gg.sona.msl.ir.BuiltinVariable
 import gg.sona.msl.ir.ConstantScalar
 import gg.sona.msl.ir.ImageDim
@@ -151,6 +154,8 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
                 write(instruction)
                 null
             }
+
+            Intrinsic.TextureAtomic -> textureAtomic(instruction)
 
             Intrinsic.TextureSize -> size(instruction)
             Intrinsic.TextureLevels, Intrinsic.TextureSamples -> {
@@ -421,6 +426,53 @@ class SpirvIntrinsicEmitter(private val e: SpirvEmitter) {
             }
         }
         e.statement(Spv.OpImageWrite, e.operand(instruction.operands[0]), coordinate, texel)
+    }
+
+    private fun textureAtomic(instruction: Instruction): Int? {
+        val arguments = TextureArguments(instruction)
+        val image = instruction.operands[0].type as IrImage
+        val load = instruction.operands[0] as? Instruction
+        if (load == null || load.opcode != Opcode.Load) {
+            e.error("texture atomics need a texture that comes directly from a resource")
+            return null
+        }
+        val coordinateValue = arguments.next()
+        val arrayIndex = arguments.take(TextureOperands.ArrayIndex)?.let { e.operand(it) }
+        val coordinate = coordinate(image, e.operand(coordinateValue), coordinateValue.type, arrayIndex, true)
+        val scalar = e.sampledScalar(image)
+        val texel = e.instruction(
+            Spv.OpImageTexelPointer,
+            e.pointerType(scalar, StorageClass.Image),
+            e.materialize(e.chain(load.operands[0])),
+            coordinate,
+            e.constantU32(0),
+        )
+        val scope = e.constantU32(Spv.ScopeDevice)
+        val semantics = e.constantU32(Spv.MemorySemanticsNone)
+        val resultType = type(scalar)
+        fun value(): Int = e.operand(arguments.next())
+        return when (TextureAtomicOperation.entries[arguments.extra]) {
+            TextureAtomicOperation.Load -> e.instruction(Spv.OpAtomicLoad, resultType, texel, scope, semantics)
+            TextureAtomicOperation.Store -> {
+                e.statement(Spv.OpAtomicStore, texel, scope, semantics, value())
+                null
+            }
+
+            TextureAtomicOperation.CompareExchange -> {
+                val desired = value()
+                val comparand = value()
+                e.instruction(Spv.OpAtomicCompareExchange, resultType, texel, scope, semantics, semantics, desired, comparand)
+            }
+
+            TextureAtomicOperation.Exchange -> e.instruction(Spv.OpAtomicExchange, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Add -> e.instruction(Spv.OpAtomicIAdd, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Sub -> e.instruction(Spv.OpAtomicISub, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.And -> e.instruction(Spv.OpAtomicAnd, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Or -> e.instruction(Spv.OpAtomicOr, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Xor -> e.instruction(Spv.OpAtomicXor, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Min -> e.instruction(if (image.sampled == SampledKind.SInt) Spv.OpAtomicSMin else Spv.OpAtomicUMin, resultType, texel, scope, semantics, value())
+            TextureAtomicOperation.Max -> e.instruction(if (image.sampled == SampledKind.SInt) Spv.OpAtomicSMax else Spv.OpAtomicUMax, resultType, texel, scope, semantics, value())
+        }
     }
 
     private fun size(instruction: Instruction): Int {
