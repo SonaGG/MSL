@@ -20,8 +20,16 @@ class IfConversion(private val budget: Int, private val uniformBudget: Int) {
         while (true) {
             val blocks = StructuredBlocks(function)
             val uniformity = Uniformity(function)
-            val header = function.blocks.firstOrNull { convertible(it, blocks, uniformity) } ?: return changed
-            convert(function, header)
+            val touched = HashSet<Block>()
+            val replacements = HashMap<Value, Value>()
+            val removed = HashSet<Block>()
+            for (header in function.blocks.toList()) {
+                if (!convertible(header, blocks, uniformity, touched)) continue
+                convert(header, uniformity, touched, removed, replacements)
+            }
+            if (touched.isEmpty()) return changed
+            function.blocks.removeAll(removed)
+            IrRewriter.replace(function, replacements)
             changed = true
         }
     }
@@ -56,14 +64,14 @@ class IfConversion(private val budget: Int, private val uniformBudget: Int) {
         return true
     }
 
-    private fun convertible(header: Block, blocks: StructuredBlocks, uniformity: Uniformity): Boolean {
-        if (header.construct != ConstructKind.Selection) return false
+    private fun convertible(header: Block, blocks: StructuredBlocks, uniformity: Uniformity, touched: Set<Block>): Boolean {
+        if (header in touched || header.construct != ConstructKind.Selection) return false
         val terminator = header.terminator ?: return false
         if (terminator.opcode != Opcode.CondBranch || terminator.operands[0].type != IrBool) return false
         val merge = header.merge ?: return false
         val whenTrue = terminator.targets[0]
         val whenFalse = terminator.targets[1]
-        if (whenTrue === whenFalse) return false
+        if (whenTrue === whenFalse || merge in touched || whenTrue in touched || whenFalse in touched) return false
         val limit = if (uniformity.isUniform(terminator.operands[0])) uniformBudget else budget
         if (!arm(header, whenTrue, merge, blocks, limit) || !arm(header, whenFalse, merge, blocks, limit)) return false
         val expected = setOf(if (whenTrue === merge) header else whenTrue, if (whenFalse === merge) header else whenFalse)
@@ -71,7 +79,13 @@ class IfConversion(private val budget: Int, private val uniformBudget: Int) {
         return merge.phis.all { phi -> phi.type !is IrStruct && phi.type !is IrArray && phi.type !is IrMatrix && phi.type != IrVoid && phi.operands.size == 2 }
     }
 
-    private fun convert(function: IrFunction, header: Block) {
+    private fun convert(
+        header: Block,
+        uniformity: Uniformity,
+        touched: MutableSet<Block>,
+        removed: MutableSet<Block>,
+        replacements: MutableMap<Value, Value>,
+    ) {
         val terminator = header.terminator!!
         val condition = terminator.operands[0]
         val merge = header.merge!!
@@ -87,11 +101,13 @@ class IfConversion(private val budget: Int, private val uniformBudget: Int) {
         }
         val trueEdge = if (whenTrue === merge) header else whenTrue
         val falseEdge = if (whenFalse === merge) header else whenFalse
-        val replacements = HashMap<Value, Value>()
+        touched += listOf(header, merge, whenTrue, whenFalse)
         for (phi in merge.phis) {
             val trueValue = phi.operands[phi.targets.indexOf(trueEdge)]
             val falseValue = phi.operands[phi.targets.indexOf(falseEdge)]
-            val select = Instruction(Opcode.Select, phi.type, listOf(condition, trueValue, falseValue))
+            val operands = listOf(condition, trueValue, falseValue).map { IrRewriter.resolve(it, replacements) }
+            val select = Instruction(Opcode.Select, phi.type, operands)
+            uniformity.inherit(phi, select)
             select.block = header
             header.instructions.add(header.instructions.size - 1, select)
             replacements[phi] = select
@@ -101,8 +117,7 @@ class IfConversion(private val budget: Int, private val uniformBudget: Int) {
         terminator.targets.clear()
         terminator.targets.add(merge)
         header.clearConstruct()
-        if (whenTrue !== merge) function.blocks.remove(whenTrue)
-        if (whenFalse !== merge) function.blocks.remove(whenFalse)
-        IrRewriter.replace(function, replacements)
+        if (whenTrue !== merge) removed.add(whenTrue)
+        if (whenFalse !== merge) removed.add(whenFalse)
     }
 }
