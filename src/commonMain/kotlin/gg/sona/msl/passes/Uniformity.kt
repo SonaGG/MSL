@@ -18,11 +18,24 @@ class Uniformity(function: IrFunction) {
     init {
         val cfg = ControlFlowGraph(function)
         val divergentBranches = HashSet<Block>()
+        val joins = HashSet<Block>()
+        val temporal = HashSet<Block>()
+        val loops = cfg.reversePostorder.filter { it.construct == ConstructKind.Loop }
+        val bodies = HashMap<Block, Set<Block>>()
+        val pending = ArrayList<Block>()
         var changed = true
         while (changed) {
             changed = false
-            val joins = joins(divergentBranches)
-            val temporal = temporal(cfg, divergentBranches)
+            if (pending.isNotEmpty()) {
+                pending.forEach { addJoins(it, joins) }
+                for (header in loops) {
+                    if (header in temporal) continue
+                    val body = bodies.getOrPut(header) { loopBlocks(header, cfg) }
+                    if (pending.none { it in body }) continue
+                    addTemporal(body, temporal)
+                }
+                pending.clear()
+            }
             for (block in cfg.reversePostorder) {
                 for (instruction in block.instructions) {
                     if (instruction in divergent) continue
@@ -41,10 +54,15 @@ class Uniformity(function: IrFunction) {
                     isDivergent(terminator.operands[0])
                 ) {
                     divergentBranches.add(block)
+                    pending.add(block)
                     changed = true
                 }
             }
         }
+    }
+
+    fun inherit(source: Value, derived: Value) {
+        if (isDivergent(source)) divergent.add(derived)
     }
 
     fun isUniform(value: Value): Boolean = !isDivergent(value)
@@ -78,43 +96,31 @@ class Uniformity(function: IrFunction) {
         }
     }
 
-    private fun joins(branches: Set<Block>): Set<Block> {
-        val result = HashSet<Block>()
-        for (branch in branches) {
-            val reached = HashMap<Block, Int>()
-            for (successor in branch.successors.distinct()) {
-                val seen = HashSet<Block>()
-                val work = ArrayDeque<Block>()
-                work.add(successor)
-                while (work.isNotEmpty()) {
-                    val block = work.removeLast()
-                    if (!seen.add(block)) continue
-                    reached[block] = (reached[block] ?: 0) + 1
-                    work.addAll(block.successors)
-                }
-            }
-            reached.filterValues { it > 1 }.keys.let(result::addAll)
-        }
-        return result
-    }
-
-    private fun temporal(cfg: ControlFlowGraph, branches: Set<Block>): Set<Block> {
-        val result = HashSet<Block>()
-        for (header in cfg.reversePostorder) {
-            if (header.construct != ConstructKind.Loop) continue
-            val body = loopBlocks(header, cfg)
-            if (body.none { it in branches }) continue
-            val exits = HashSet<Block>()
-            for (block in body) for (successor in block.successors) if (successor !in body) exits.add(successor)
-            val work = ArrayDeque(exits)
+    private fun addJoins(branch: Block, joins: MutableSet<Block>) {
+        val reached = HashMap<Block, Int>()
+        for (successor in branch.successors.distinct()) {
+            val seen = HashSet<Block>()
+            val work = ArrayDeque<Block>()
+            work.add(successor)
             while (work.isNotEmpty()) {
                 val block = work.removeLast()
-                if (!result.add(block)) continue
+                if (block in joins || !seen.add(block)) continue
+                reached[block] = (reached[block] ?: 0) + 1
                 work.addAll(block.successors)
             }
-            result.addAll(body)
         }
-        return result
+        for ((block, count) in reached) if (count > 1) joins.add(block)
+    }
+
+    private fun addTemporal(body: Set<Block>, temporal: MutableSet<Block>) {
+        val work = ArrayDeque<Block>()
+        for (block in body) for (successor in block.successors) if (successor !in body) work.add(successor)
+        while (work.isNotEmpty()) {
+            val block = work.removeLast()
+            if (!temporal.add(block)) continue
+            work.addAll(block.successors)
+        }
+        temporal.addAll(body)
     }
 
     private fun loopBlocks(header: Block, cfg: ControlFlowGraph): Set<Block> {
