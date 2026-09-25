@@ -7,8 +7,8 @@ import gg.sona.msl.ir.Value
 
 object PhiSimplification {
     fun run(function: IrFunction) {
+        val cfg = ControlFlowGraph(function)
         while (true) {
-            val cfg = ControlFlowGraph(function)
             val replacements = HashMap<Value, Value>()
             for (block in function.blocks) {
                 for (phi in block.phis) {
