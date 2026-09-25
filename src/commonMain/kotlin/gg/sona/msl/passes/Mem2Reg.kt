@@ -24,8 +24,9 @@ object Mem2Reg {
         val cfg = ControlFlowGraph(function)
         val frontiers = cfg.dominanceFrontiers()
         val phiOwners = HashMap<Instruction, Instruction>()
-        for (variable in candidates) placePhis(variable, cfg, frontiers, phiOwners)
         val candidateSet = candidates.toHashSet()
+        val stores = storeBlocks(cfg, candidateSet)
+        for (variable in candidates) placePhis(variable, stores[variable] ?: LinkedHashSet(), frontiers, phiOwners)
         val removed = HashSet<Instruction>()
         rename(function.entry, cfg, candidateSet, phiOwners, HashMap(), replacements, removed)
         for (block in function.blocks) block.instructions.removeAll { it in removed || it in candidateSet }
@@ -107,17 +108,25 @@ object Mem2Reg {
         }
     }
 
+    private fun storeBlocks(cfg: ControlFlowGraph, candidates: Set<Instruction>): Map<Instruction, LinkedHashSet<Block>> {
+        val stores = HashMap<Instruction, LinkedHashSet<Block>>()
+        for (block in cfg.reversePostorder) {
+            for (instruction in block.instructions) {
+                if (instruction.opcode != Opcode.Store) continue
+                val variable = instruction.operands[0] as? Instruction ?: continue
+                if (variable in candidates) stores.getOrPut(variable) { LinkedHashSet() }.add(block)
+            }
+        }
+        return stores
+    }
+
     private fun placePhis(
         variable: Instruction,
-        cfg: ControlFlowGraph,
+        definitions: LinkedHashSet<Block>,
         frontiers: Map<Block, Set<Block>>,
         phiOwners: HashMap<Instruction, Instruction>,
     ) {
         val valueType = (variable.type as IrPointer).pointee
-        val definitions = LinkedHashSet<Block>()
-        for (block in cfg.reversePostorder) {
-            if (block.instructions.any { it.opcode == Opcode.Store && it.operands[0] === variable }) definitions.add(block)
-        }
         val placed = HashSet<Block>()
         val worklist = ArrayDeque(definitions)
         while (worklist.isNotEmpty()) {
