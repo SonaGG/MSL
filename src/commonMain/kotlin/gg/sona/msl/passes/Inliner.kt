@@ -12,15 +12,29 @@ object Inliner {
     fun run(module: IrModule) {
         val entries = module.entryPoints.map { it.function }.toSet()
         for (function in entries) {
-            while (true) {
-                val call = function.instructions().firstOrNull { it.opcode == Opcode.Call } ?: break
-                inline(function, call)
+            val results = HashMap<Value, Value>()
+            var index = 0
+            while (index < function.blocks.size) {
+                val call = function.blocks[index].instructions.firstOrNull { it.opcode == Opcode.Call }
+                if (call != null) inline(function, call, results)
+                index++
             }
+            if (results.isNotEmpty()) resolve(function, results)
         }
         module.functions.retainAll { it in entries }
     }
 
-    private fun inline(function: IrFunction, call: Instruction) {
+    private fun resolve(function: IrFunction, results: Map<Value, Value>) {
+        for (instruction in function.instructions()) {
+            for (i in instruction.operands.indices) {
+                var value = instruction.operands[i]
+                while (true) value = results[value] ?: break
+                instruction.operands[i] = value
+            }
+        }
+    }
+
+    private fun inline(function: IrFunction, call: Instruction, results: MutableMap<Value, Value>) {
         val block = call.block!!
         val callee = call.callee!!
         val index = block.instructions.indexOf(call)
@@ -102,9 +116,6 @@ object Inliner {
         block.instructions.add(branch)
         val position = function.blocks.indexOf(block) + 1
         function.blocks.addAll(position, callee.blocks.map { blockMapping.getValue(it) })
-        if (result != null) {
-            val replacement = mapOf<Value, Value>(call to result)
-            for (instruction in function.instructions()) instruction.replaceOperands(replacement)
-        }
+        if (result != null) results[call] = result
     }
 }
