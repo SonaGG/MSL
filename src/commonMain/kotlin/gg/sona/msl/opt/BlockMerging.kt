@@ -8,13 +8,21 @@ import gg.sona.msl.ir.Value
 
 object BlockMerging {
     fun run(function: IrFunction): Boolean {
-        var changed = false
-        while (true) {
-            val blocks = StructuredBlocks(function)
-            val pair = function.blocks.firstNotNullOfOrNull { block -> mergeable(block, blocks)?.let { block to it } } ?: return changed
-            merge(function, pair.first, pair.second)
-            changed = true
+        val blocks = StructuredBlocks(function)
+        val replacements = HashMap<Value, Value>()
+        val removed = HashSet<Block>()
+        for (block in function.blocks.toList()) {
+            if (block in removed) continue
+            while (true) {
+                val successor = mergeable(block, blocks) ?: break
+                merge(block, successor, blocks, replacements)
+                removed.add(successor)
+            }
         }
+        if (removed.isEmpty()) return false
+        function.blocks.removeAll(removed)
+        IrRewriter.replace(function, replacements)
+        return true
     }
 
     private fun mergeable(block: Block, blocks: StructuredBlocks): Block? {
@@ -29,8 +37,7 @@ object BlockMerging {
         return successor
     }
 
-    private fun merge(function: IrFunction, block: Block, successor: Block) {
-        val replacements = HashMap<Value, Value>()
+    private fun merge(block: Block, successor: Block, blocks: StructuredBlocks, replacements: MutableMap<Value, Value>) {
         for (phi in successor.phis) replacements[phi] = phi.operands[phi.targets.indexOf(block)]
         block.instructions.removeAt(block.instructions.size - 1)
         for (instruction in successor.instructions) {
@@ -39,12 +46,11 @@ object BlockMerging {
             block.instructions.add(instruction)
         }
         block.copyConstructFrom(successor)
-        for (other in function.blocks) {
-            for (phi in other.phis) phi.replaceTarget(successor, block)
-            if (other.merge === successor) other.merge = block
-            if (other.continueTarget === successor) other.continueTarget = block
+        for (next in successor.successors.distinct()) {
+            for (phi in next.phis) phi.replaceTarget(successor, block)
+            val predecessors = blocks.predecessors[next] ?: continue
+            for (i in predecessors.indices) if (predecessors[i] === successor) predecessors[i] = block
         }
-        function.blocks.remove(successor)
-        IrRewriter.replace(function, replacements)
+        blocks.predecessors.remove(successor)
     }
 }
