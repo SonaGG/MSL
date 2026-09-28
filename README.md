@@ -10,6 +10,7 @@ MSL is designed to provide a portable compiler infrastructure with first-party s
 |---------------|--------------|-------------|
 | **SPIR-V**    | ✅ Supported | First-party |
 | **DXIL**      | ✅ Supported | First-party |
+| **GLSL**      | 🚧 WIP       | First-party |
 | **Metal AIR** | 🚧 WIP       | First-party |
 
 ### SPIR-V
