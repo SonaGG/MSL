@@ -260,6 +260,9 @@ class ConstantFolder(private val localValues: Map<Variable, ConstValue>) {
             }
             return if (type is EnumType) EnumConstant(type, result) else (type as? ScalarType)?.let { ScalarConstant.of(it, result) }
         }
+        if (left.type is MatrixType || right.type is MatrixType) {
+            return if (operator == HBinaryOperator.Multiply && type is VectorType) matrixProduct(left, right, type) else null
+        }
         if (type is VectorType) {
             val leftLanes = components(left)
             val rightLanes = components(right)
@@ -274,6 +277,24 @@ class ConstantFolder(private val localValues: Map<Variable, ConstValue>) {
         val b = right as? ScalarConstant ?: return null
         val target = type as? ScalarType ?: return null
         return scalarBinary(operator, a, b, target)
+    }
+
+    private fun matrixProduct(left: ConstValue, right: ConstValue, type: VectorType): ConstValue? {
+        val matrixOnLeft = left.type is MatrixType
+        val matrix = (if (matrixOnLeft) left.type else right.type) as MatrixType
+        if (!type.element.kind.isFloat) return null
+        val elements = components(if (matrixOnLeft) left else right)
+        val vector = components(if (matrixOnLeft) right else left)
+        if (elements.size != matrix.columns * matrix.rows) return null
+        fun element(column: Int, row: Int): Double = elements[column * matrix.rows + row].asDouble
+        val lanes = if (matrixOnLeft) {
+            if (vector.size != matrix.columns || type.size != matrix.rows) return null
+            List(matrix.rows) { row -> (0 until matrix.columns).sumOf { column -> element(column, row) * vector[column].asDouble } }
+        } else {
+            if (vector.size != matrix.rows || type.size != matrix.columns) return null
+            List(matrix.columns) { column -> (0 until matrix.rows).sumOf { row -> vector[row].asDouble * element(column, row) } }
+        }
+        return CompositeConstant(type, lanes.map { ScalarConstant.of(type.element, it) })
     }
 
     private fun scalarBinary(operator: HBinaryOperator, a: ScalarConstant, b: ScalarConstant, type: ScalarType): ScalarConstant? {
